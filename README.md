@@ -35,12 +35,12 @@ chats = lib.chats.user.ids  # ユーザーchatId一覧
 
 ### 4. メッセージ送信
 ```python
-lib.sendMessage(user_id, "こんにちは！", bot_id)
+lib.send_message(user_id, "こんにちは！", bot_id)
 ```
 
 ### 5. 画像送信
 ```python
-lib.sendImage(chat_id, "sample.png", bot_id)
+lib.send_file(chat_id, "sample.png", bot_id)
 ```
 
 ### 6. メッセージ監視
@@ -49,7 +49,7 @@ lib.listen_messages(bot_id, chat_id, on_message=lambda msg: print(msg))
 ```
 
 ## サンプル
-`example/api.py` を参照してください。
+`example` を参照してください。
 
 ## クラス構成
 - `LINELib` ... 全機能統合のメインクラス
@@ -59,4 +59,5 @@ lib.listen_messages(bot_id, chat_id, on_message=lambda msg: print(msg))
 
 ## ライセンス
 MIT License
+
 
