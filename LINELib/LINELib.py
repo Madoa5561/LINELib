@@ -36,20 +36,19 @@ class LINELib:
             if on_event:
                 on_event(event)
 
-    
-    def send_image(self, chat_id: str, image_path: str, bot_id: Optional[str] = None) -> Dict[str, Any]:
+    def send_file(self, chat_id: str, file_path: str, bot_id: Optional[str] = None) -> Dict[str, Any]:
         """
-        指定チャットに画像を送信
+        指定チャットにファイルを送信
         :param chat_id: チャットID
-        :param image_path: 画像ファイルパス
+        :param file_path: ファイルパス
         :param bot_id: 利用するbotId（省略時は先頭bot）
         """
         if bot_id is None:
             bot_id = next(iter(self.bots.ids.values()), None)
         if not bot_id:
             raise LINEOAError("No bot found")
-        return self._chat_service.send_image(
-            bot_id, chat_id, image_path, session=self._session, xsrf_token=self._xsrf_token
+        return self._chat_service.send_file(
+            bot_id, chat_id, file_path, session=self._session, xsrf_token=self._xsrf_token
         )
     
     def listen_stream_events(self, streaming_api_token: str, device_type: str = "", client_type: str = "PC", ping_secs: int = 60, last_event_id: Optional[str] = None, on_event: Optional[Callable[[Dict[str, Any]], None]] = None) -> None:
