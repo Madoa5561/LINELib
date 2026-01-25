@@ -7,6 +7,7 @@ import json
 from typing import Optional, Dict, Any, Callable, Generator
 from .exceptions import LINEOAError
 from .util import merge_dicts
+from .ttypes import MessageType
 import requests as _requests
 from .logger import lineoa_logger
 
@@ -21,13 +22,39 @@ class ChatService:
             "Content-Type": "application/json"
         }
 
-    def send_image(self, bot_id, chat_id, image_path, session=None, xsrf_token=None):
+    def send_mention(self, bot_id: str, chat_id: str, mentionee_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """
-        Upload and send an image file to a chat.
+            Send a mention message to a chat.
+            Args:
+                bot_id: Bot ID
+                chat_id: Chat ID
+                mentionee_id: User ID to mention
+                session: Authenticated requests.Session
+                xsrf_token: XSRF token
+            Returns:
+                dict: Always empty
+        """
+        mention_text = f"@{mentionee_id} "
+        payload = {
+            "type": "text",
+            "text": mention_text,
+            "mentions": [
+                {
+                    "userId": mentionee_id,
+                    "offset": 0,
+                    "length": len(mention_text)
+                }
+            ]
+        }
+        return self.send_message(bot_id, chat_id, payload, session=session, xsrf_token=xsrf_token)
+
+    def send_file(self, bot_id, chat_id, file_path, session=None, xsrf_token=None):
+        """
+        Upload and send a file (image, etc.) to a chat.
         Args:
             bot_id: Bot ID
             chat_id: Chat ID
-            image_path: Path to image file
+            file_path: Path to file (image, etc.)
             session: Authenticated requests.Session
             xsrf_token: XSRF token
         Returns:
@@ -56,12 +83,11 @@ class ChatService:
             "Sec-Fetch-Dest": "empty",
             "x-oa-chat-client-version": self.chat_client_version,
             "Cookie": cookie_str,
-            "Content-Type": "application/json",
         }
         if xsrf_token:
             headers_upload["X-XSRF-TOKEN"] = xsrf_token
-        with open(image_path, "rb") as f:
-            files = {"file": (os.path.basename(image_path), f, "image/png")}
+        with open(file_path, "rb") as f:
+            files = {"file": (os.path.basename(file_path), f, "application/octet-stream")}
             resp_upload = req.post(url_upload, headers=headers_upload, files=files)
         if not resp_upload.ok:
             raise LINEOAError(f"uploadFile failed: {resp_upload.status_code} {resp_upload.text}")
