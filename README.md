@@ -49,7 +49,7 @@ lib.listen_messages(bot_id, chat_id, on_message=lambda msg: print(msg))
 ```
 
 ## サンプル
-`examplesned.py` を参照してください。
+`example/api.py` を参照してください。
 
 ## クラス構成
 - `LINELib` ... 全機能統合のメインクラス
@@ -58,4 +58,5 @@ lib.listen_messages(bot_id, chat_id, on_message=lambda msg: print(msg))
 - `LINEOAError` ... 例外クラス
 
 ## ライセンス
-MIT
+MIT License
+
