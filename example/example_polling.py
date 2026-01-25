@@ -14,7 +14,7 @@ def on_message(event):
     text = message.get('text', '')
     print(f"[on_message] {text}")
     if message.get('type') == 'text' and text == "ping":
-        bot.send_message(chat_id=payload.get('chatId'), text="pong!", bot_id=payload.get('botId'))
+        bot.sendmessage( bot_id=payload.get('botId'), chat_id=payload.get('chatId'), text="pong!")
 
 # botがグループに招待・参加
 @bot.event
