@@ -7,5 +7,6 @@ from typing import Any
 
 __all__ = ["ChatService", "AuthService", "LINEOAError", "merge_dicts"]
 __author__ = "madoa5561"
-__version__ = "3.1.1"
+__version__ = "3.2.1"
 __license__ = "MIT"
+
