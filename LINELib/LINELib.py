@@ -133,12 +133,13 @@ class LINELib:
         """
         return self._chat_service.listen_messages(bot_id, chat_id, on_message)
 
-    def send_message(self, user_id: str, context: str, bot_id: Optional[str] = None) -> Dict[str, Any]:
+    def send_message(self, user_id: str, context: str, bot_id: Optional[str] = None, quoteToken: Optional[str] = None) -> Dict[str, Any]:
         """
         指定ユーザーにテキストメッセージを送信
         :param user_id: チャットID（ユーザーID）
         :param context: 送信するテキスト
         :param bot_id: 利用するbotId（省略時は先頭bot）
+        :param quoteToken: リプライ用(省略時は普通のメッセージ)
         """
         if bot_id is None:
             bot_id = next(iter(self.bots.ids.values()), None)
@@ -152,6 +153,8 @@ class LINELib:
             "text": context,
             "sendId": send_id
         }
+        if quoteToken:
+            payload["quoteToken"] = quoteToken
         return self._chat_service.send_message(
             bot_id, user_id, payload, session=self._session, xsrf_token=self._xsrf_token
         )
@@ -245,5 +248,6 @@ class ChatTypeIds:
     @property
     def ids(self) -> List[str]:
         return self._ids
+
 
 
