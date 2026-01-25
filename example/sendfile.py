@@ -8,7 +8,7 @@ def example_send_image():
     COOKIE_PATH = os.environ.get("LINEOA_COOKIE_PATH", "lineoa-storage.json")
     bot = LineBot(cookie_path=COOKIE_PATH)
     try:
-        bot.send_file(chat_id=chat_id, file_path=file_path, bot_id=bot_id)
+        bot.sendFile(bot_id=bot_id, chat_id=chat_id, file_path=file_path)
     except Exception as e:
         print(e)
 
