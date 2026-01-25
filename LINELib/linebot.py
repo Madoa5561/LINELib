@@ -18,9 +18,9 @@ class LineBot:
             self._bot_ids = list(self._lib.bots.ids.values())
         lineoa_logger.login("Login success (cookie loaded)")
 
-    def sendMessage(self, bot_id=None, chat_id=None, text=None):
+    def sendMessage(self, bot_id=None, chat_id=None, text=None, quoteToken=None):
         """テキストメッセージ送信"""
-        return self._lib.send_message(user_id=chat_id, context=text, bot_id=bot_id)
+        return self._lib.send_message(bot_id=bot_id, user_id=str(chat_id), context=str(text), quoteToken=quoteToken)
 
     def sendFile(self, bot_id=None, chat_id=None, file_path=None):
         """ファイル送信"""
@@ -89,6 +89,7 @@ class LineBot:
         except KeyboardInterrupt:
             self.running = False
             print('Bot stopped.')
+
 
 
 
