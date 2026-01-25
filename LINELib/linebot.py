@@ -30,6 +30,10 @@ class LineBot:
         """チャット履歴取得"""
         return self._lib.get_chat_messages(bot_id=bot_id, chat_id=chat_id, limit=limit, before=before, after=after)
 
+    def getMembers(self, bot_id=None, chat_id=None, limit=100):
+        """チャットメンバー取得"""
+        return self._lib.get_chat_members(bot_id=str(bot_id), chat_id=str(chat_id), limit=limit)
+    
     def event(self, func):
         self.handlers[func.__name__] = func
         return func
@@ -85,6 +89,7 @@ class LineBot:
         except KeyboardInterrupt:
             self.running = False
             print('Bot stopped.')
+
 
 
 
