@@ -206,10 +206,10 @@ class LINELib:
                     self._provider = resp.json()
                 else:
                     self._provider = []
-                    raise LINEOAError(f"プロバイダー取得失敗: {resp.status_code} {resp.text}")
+                    raise LINEOAError(f"get Provider Not found: {resp.status_code} {resp.text}")
             except Exception as e:
                 self._provider = []
-                raise LINEOAError(f"プロバイダー取得例外: {e}")
+                raise LINEOAError(f"get Provider Error: {e}")
         return self._provider
 
 class BotsInfo:
@@ -239,3 +239,4 @@ class ChatTypeIds:
     @property
     def ids(self) -> List[str]:
         return self._ids
+
