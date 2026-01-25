@@ -39,6 +39,12 @@ class LINELib:
         except Exception as e:
             print("[EXCEPTION in get_streaming_api_token_and_listen_stream_events]", e)
 
+    def get_chat_members(self, bot_id=None, chat_id=None, limit: int = 100) -> Dict[str, Any]:
+        """チャットメンバー一覧取得"""
+        return self._chat_service.get_chat_members(
+            bot_id=str(bot_id), chat_id=str(chat_id), limit=limit, session=self._session, xsrf_token=self._xsrf_token
+        )
+
     def send_file(self, chat_id: str, file_path: str, bot_id: Optional[str] = None) -> Dict[str, Any]:
         """
         指定チャットにファイルを送信
@@ -239,4 +245,5 @@ class ChatTypeIds:
     @property
     def ids(self) -> List[str]:
         return self._ids
+
 
