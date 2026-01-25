@@ -86,7 +86,7 @@ def handle_text_message(event):
                 )
             )
             bot.sendMessage(
-                bot_id="Ue7ffdf8230e5ffe2ac073b09ce44e17d",
+                bot_id=BOT_ID,
                 chat_id=get_chatid_from_groupid(event.source.group_id),
                 text="pong from LINELib!"
             )
