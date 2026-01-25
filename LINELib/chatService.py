@@ -121,6 +121,42 @@ class ChatService:
             raise LINEOAError(f"bulkSendFiles failed: {resp_bulk.status_code} {resp_bulk.text}")
         return resp_bulk.json()
 
+    def get_chat_members(self, bot_id: str, chat_id: str, limit: int = 100, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get chat members for a chat.
+        Args:
+            bot_id: Bot ID
+            chat_id: Chat ID
+            limit: Number of members to retrieve
+            session: Authenticated requests.Session
+            xsrf_token: XSRF token
+        Returns:
+            dict: List of chat members
+        """
+        url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/members?limit={limit}"
+        headers = {
+            "accept": "application/json, text/plain, */*",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
+            "priority": "u=1, i",
+            "referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
+            "sec-ch-ua": '"Not(A:Brand";v="8", "Chromium";v="144", "Microsoft Edge";v="144"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
+            "x-oa-chat-client-version": self.chat_client_version
+        }
+        if xsrf_token:
+            headers["x-xsrf-token"] = xsrf_token
+        req = session if session else requests
+        resp = req.get(url, headers=headers)
+        if not resp.ok:
+            raise LINEOAError(f"get_chat_members failed: {resp.status_code} {resp.text}")
+        return resp.json()
+
     def listen_messages(self, bot_id: str, chat_id: str, on_message: Optional[Callable[[Dict[str, Any]], None]] = None, session: Optional[requests.Session] = None) -> None:
         """
         Listen for real-time messages in a chat (SSE).
@@ -584,3 +620,4 @@ class ChatService:
     def _handle_response(self, response: requests.Response) -> None:
         if not response.ok:
             raise LINEOAError(f"HTTP {response.status_code}: {response.text}")
+
