@@ -83,10 +83,12 @@ class ChatService:
             "Sec-Fetch-Dest": "empty",
             "x-oa-chat-client-version": self.chat_client_version,
             "Cookie": cookie_str,
+            # "Content-Type" は multipart/form-data の場合は自動で付与されるため指定しない
         }
         if xsrf_token:
             headers_upload["X-XSRF-TOKEN"] = xsrf_token
         with open(file_path, "rb") as f:
+            # 拡張子からMIMEタイプを推定する場合はmimetypes.guess_type等を利用可
             files = {"file": (os.path.basename(file_path), f, "application/octet-stream")}
             resp_upload = req.post(url_upload, headers=headers_upload, files=files)
         if not resp_upload.ok:
