@@ -11,8 +11,9 @@ from typing import Any
 
 __all__ = ["ChatService", "AuthService", "LINEOAError", "merge_dicts"]
 __author__ = "madoa5561"
-__version__ = "4.4.2"
+__version__ = "4.4.3"
 __license__ = "MIT"
+
 
 
 
