@@ -2,9 +2,9 @@ import os
 from LINELib.linebot import LineBot
 
 def example_send_image():
-    bot_id = "U*****"
-    chat_id = "C*****"
-    file_path = "***.png"
+    bot_id = "U****"
+    chat_id = "C***"
+    file_path = "logo.png"
     COOKIE_PATH = os.environ.get("LINEOA_COOKIE_PATH", "lineoa-storage.json")
     bot = LineBot(cookie_path=COOKIE_PATH)
     try:
