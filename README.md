@@ -1,10 +1,11 @@
-# LINEOALib
+# LINELib
 
-LINEOALibは、LINE公式アカウントの管理・チャット・認証・自動化をPythonから簡単に扱えるライブラリです。
+LINELibは、LINE公式アカウントのチャット・認証・自動化をPythonから簡単に扱えるライブラリです
 
 ## 特徴
 - Seleniumによる認証・Cookie管理
 - 複数Bot・チャットの取得・送信・監視
+- 有料のメッセージ送信を使わずにメッセージを送信する
 
 ## インストール
 ```
@@ -93,8 +94,13 @@ if __name__ == "__main__":
 - `ChatService` ... チャットAPI
 - `LINEOAError` ... 例外クラス
 
+## 注意事項
+自己責任での使用
+20message /1m のレートリミットが存在
+
 ## ライセンス
 MIT License
+
 
 
 
