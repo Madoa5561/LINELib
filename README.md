@@ -8,7 +8,7 @@ LINEOALibは、LINE公式アカウントの管理・チャット・認証・自�
 
 ## インストール
 ```
-pip install -r requirements.txt
+pip install lineoa
 ```
 
 ## 使い方
@@ -59,5 +59,6 @@ lib.listen_messages(bot_id, chat_id, on_message=lambda msg: print(msg))
 
 ## ライセンス
 MIT License
+
 
 
