@@ -10,8 +10,9 @@ from typing import Any
 
 __all__ = ["ChatService", "AuthService", "LINEOAError", "merge_dicts"]
 __author__ = "madoa5561"
-__version__ = "4.4.3"
+__version__ = "4.4.4"
 __license__ = "MIT"
+
 
 
 
