@@ -1,5 +1,5 @@
 import os
-from LINELib.linebot import LineBot
+from lineoa.linebot import LineBot
 
 def example_send_image():
     bot_id = "U*****"
