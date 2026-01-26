@@ -1,9 +1,10 @@
-from lineoa.linebot import LineBot
+from LINELib.linebot import LineBot
 
 bot = LineBot(
     cookie_path="lineoa-storage.json",
     ping_secs=30
 )
+BOT_ID = "U*****"
 
 # メッセージ受信時
 @bot.event
@@ -86,4 +87,4 @@ def on_unknown(event):
     #print("[unknown]", event)
 
 if __name__ == "__main__":
-    bot.listen(botid="U*****")
+    bot.listen(botid=BOT_ID)
