@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lineoa"
-version = "4.4.4"
+version = "4.4.5"
 description = "LINE Official User API wrapper library for Python"
 readme = "README.md"
 requires-python = ">=3.8"
