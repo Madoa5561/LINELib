@@ -1,4 +1,4 @@
-from LINELib.linebot import LineBot
+from lineoa.linebot import LineBot
 
 bot = LineBot(
     cookie_path="lineoa-storage.json",
