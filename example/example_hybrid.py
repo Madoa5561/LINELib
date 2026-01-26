@@ -5,12 +5,12 @@ from argparse import ArgumentParser
 from flask import Flask, request, abort, send_from_directory
 from werkzeug.middleware.proxy_fix import ProxyFix
 import requests
-from LINELib.util import (
+from lineoa.util import (
     link_group_and_chat,
     get_chatid_from_groupid,
     get_groupid_from_chatid
 )
-from LINELib.linebot import LineBot
+from lineoa.linebot import LineBot
 
 from linebot.v3 import (
     WebhookHandler
