@@ -11,7 +11,7 @@ import random
 
 class LINELib:
 
-    def __init__(self, storage: Optional[str] = None):
+    def __init__(self, storage: Optional[str] = None, email: Optional[str] = None, password: Optional[str] = None):
         self.storage = storage or "lineoa-storage.json"
         self._storage_cache = None
         self._auth = AuthService(cookie_store_path=self.storage)
@@ -21,7 +21,7 @@ class LINELib:
         try:
             self._restore_session_from_cookie()
         except LINEOAError as e:
-            login_result = self._auth.login_with_email_and_2fa(None, None, get_2fa_code_callback=None)
+            login_result = self._auth.login_with_email_and_2fa(email, password, get_2fa_code_callback=None)
             self._session = login_result.get("session")
             self._user_info = login_result.get("user_info")
             for c in self._session.cookies:
@@ -400,3 +400,4 @@ class ChatTypeIds:
     @property
     def ids(self) -> List[str]:
         return self._ids
+
