@@ -3,14 +3,14 @@ from LINELib.LINELib import LINELib
 from LINELib.logger import lineoa_logger
 
 class LineBot:
-    def __init__(self, cookie_path="lineoa-storage.json", ping_secs=60, device_type="", client_type="PC"):
+    def __init__(self, cookie_path="lineoa-storage.json", ping_secs=60, device_type="", client_type="PC", email=None, password=None):
         self.cookie_path = cookie_path
         self.ping_secs = ping_secs
         self.device_type = device_type
         self.client_type = client_type
         self.handlers = {}
         self.running = False
-        self._lib = LINELib(storage=self.cookie_path)
+        self._lib = LINELib(storage=self.cookie_path, email=email, password=password)
         self._session = self._lib._session
         self._xsrf_token = self._lib._xsrf_token
         self._bot_ids = None
@@ -93,6 +93,7 @@ class LineBot:
         except KeyboardInterrupt:
             self.running = False
             print('Bot stopped.')
+
 
 
 
