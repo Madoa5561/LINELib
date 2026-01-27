@@ -54,7 +54,7 @@ class AuthService:
 					return {"session": session, "user_info": user_info}
 			except Exception as e:
 				raise LINEOAError(f"Cookie storage load error: {e}")
-		if email is None and password is None:
+		if True:
 			session = requests.Session()
 			user_info = {"user_name": None}
 			login_url = "https://account.line.biz/login?redirectUri=https%3A%2F%2Faccount.line.biz%2Foauth2%2Fcallback%3Fclient_id%3D10%26code_challenge%3D4x53SnbmZOYxDeiDFpINCIeh9t1HYiSmIY2E7CblxVY%26code_challenge_method%3DS256%26redirect_uri%3Dhttps%253A%252F%252Fmanager.line.biz%252Fapi%252Foauth2%252FbizId%252Fcallback%26response_type%3Dcode%26state%3DUxTSXVJiwgOWD4cnrk68RCXBwhPLPkBI"
@@ -62,6 +62,17 @@ class AuthService:
 			chrome_options.add_experimental_option("detach", True)
 			driver = webdriver.Chrome(options=chrome_options)
 			driver.get(login_url)
+			try:
+				time.sleep(1)
+				btn = driver.find_element("xpath", "/html/body/main/div[2]/div[1]/div[2]/toly-button")
+				btn.click()
+				time.sleep(1)
+				mail = driver.find_element("xpath", "/html/body/main/div[2]/div[1]/div[2]/div/div/form/div[2]/toly-input[1]/input")
+				mail.send_keys(email)
+				pwd = driver.find_element("xpath", "/html/body/main/div[2]/div[1]/div[2]/div/div/form/div[2]/toly-input[2]/input")
+				pwd.send_keys(password)
+			except Exception:
+				time.sleep(1)
 			while True:
 				time.sleep(2)
 				try:
@@ -197,3 +208,4 @@ class AuthService:
 			return response.json()
 		except Exception as e:
 			raise LINEOAError(f"login_with_email failed: {e}")
+
