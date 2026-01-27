@@ -2,7 +2,9 @@ from LINELib.linebot import LineBot
 
 bot = LineBot(
     cookie_path="lineoa-storage.json",
-    ping_secs=30
+    ping_secs=30,
+    email=None, # Auto selenium Input Option
+    password=None # Auto selenium Input Option
 )
 BOT_ID = "U*****"
 
