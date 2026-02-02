@@ -33,7 +33,7 @@ bot = LineBot(storage=COOKIE_PATH, ping_secs=20)
 ### 3. Bot一覧・チャット一覧取得
 ```python
 bots = bot.bots.ids  # {bot名: botId}
-chats = bot.chats.user.ids  # ユーザーchatId一覧
+chats = bot.getChats(bot_id)  # ユーザーchatId一覧
 ```
 
 ### 4. メッセージ送信
@@ -101,6 +101,7 @@ if __name__ == "__main__":
 
 ## ライセンス
 MIT License
+
 
 
 
