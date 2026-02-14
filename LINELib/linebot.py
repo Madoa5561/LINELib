@@ -33,7 +33,11 @@ class LineBot:
     def getMembers(self, bot_id=None, chat_id=None, limit=100):
         """チャットメンバー取得"""
         return self._lib.getMembers(bot_id=str(bot_id), chat_id=str(chat_id), limit=limit)
-
+    
+    def getBots(self):
+        """botアカウントの一覧取得"""
+        return self._lib.get_bots()
+    
     def getChats(self, bot_id=None, limit=100):
         """チャット一覧取得"""
         return self._lib.getChats(bot_id=str(bot_id), limit=limit)
@@ -93,6 +97,7 @@ class LineBot:
         except KeyboardInterrupt:
             self.running = False
             print('Bot stopped.')
+
 
 
 
