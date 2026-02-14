@@ -394,19 +394,47 @@ class BotsInfo:
                 key = at_id if at_id else name
                 result[key] = u_id
         return result
+    def __repr__(self) -> str:
+        entries = []
+        for b in self._bots:
+            name = b.get("name", "unknown")
+            bot_id = b.get("botId", "")
+            search_id = b.get("basicSearchId", "")
+            entries.append(f"  {name} : {bot_id} ({search_id})")
+        return f"BotsInfo({len(self._bots)} bots)\n" + "\n".join(entries)
 
 class ChatsInfo:
     def __init__(self, chats_list: List[Dict[str, Any]]):
         self._chats = chats_list
         self.group = ChatTypeIds(self._chats, "GROUP")
         self.user = ChatTypeIds(self._chats, "USER")
+    def __repr__(self) -> str:
+        lines = []
+        for c in self._chats:
+            profile = c.get("profile", {})
+            chat_id = c.get("chatId", "unknown")
+            name = profile.get("name", chat_id)
+            chat_type = c.get("chatType", "")
+            lines.append(f"  {name} : {chat_id}  [{chat_type}]")
+        return f"ChatsInfo({len(self._chats)} chats)\n" + "\n".join(lines)
 
 class ChatTypeIds:
     def __init__(self, chats: List[Dict[str, Any]], chat_type: str):
-        self._ids = [c["chatId"] for c in chats if c.get("chatType") == chat_type]
+        self._type = chat_type
+        self._chats = [c for c in chats if c.get("chatType") == chat_type]
+        self._ids = [c["chatId"] for c in self._chats]
     @property
     def ids(self) -> List[str]:
         return self._ids
+    def __repr__(self) -> str:
+        lines = []
+        for c in self._chats:
+            profile = c.get("profile", {})
+            chat_id = c.get("chatId", "unknown")
+            name = profile.get("name", chat_id)
+            lines.append(f"  {name} : {chat_id}")
+        return f"ChatTypeIds({self._type}, {len(self._ids)} chats)\n" + "\n".join(lines)
+
 
 
 
