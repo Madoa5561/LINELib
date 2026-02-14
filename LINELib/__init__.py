@@ -8,7 +8,8 @@ from typing import Any
 
 __all__ = ["ChatService", "AuthService", "LINEOAError", "merge_dicts", "LineBot", "LINELib"]
 __author__ = "madoa5561"
-__version__ = "5.5.6"
+__version__ = "5.5.7"
 
 __license__ = "MIT"
+
 
