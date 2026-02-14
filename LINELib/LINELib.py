@@ -194,6 +194,13 @@ class LINELib:
         """
         return self._chat_service.listen_messages(bot_id, chat_id, on_message)
 
+    def get_bots(self):
+        if self._bots is None:
+            bots = self._chat_service.get_bot_accounts(session=self._session, xsrf_token=self._xsrf_token)
+            # bots: list of dicts with 'botId' and 'name'
+            self._bots = BotsInfo(bots.get("list", []))
+        return self._bots
+    
     def get_chats(self, bot_id: str, limit: int) -> Dict[str, Any]:
         """
         指定Botのチャット一覧を取得
@@ -400,5 +407,6 @@ class ChatTypeIds:
     @property
     def ids(self) -> List[str]:
         return self._ids
+
 
 
