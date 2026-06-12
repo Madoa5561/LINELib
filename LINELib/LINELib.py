@@ -1,6 +1,8 @@
 from typing import Optional, List, Dict, Any, Callable
 from .AuthService import AuthService
 from .ChatService import ChatService
+from .config import RateLimitConfig
+from .session_utils import get_cookie_dict, get_xsrf_token
 from .util import ratelimiter, ratelimit_after
 from .exceptions import LINEOAError
 import os
@@ -8,12 +10,30 @@ import requests
 import json
 import time
 import random
+import threading
 
 class LINELib:
 
-    def __init__(self, storage: Optional[str] = None, email: Optional[str] = None, password: Optional[str] = None):
+    def __init__(
+        self,
+        storage: Optional[str] = None,
+        email: Optional[str] = None,
+        password: Optional[str] = None,
+        rate_limit: int = 18,
+        rate_limit_window: float = 60,
+        rate_limit_enabled: bool = True,
+    ):
         self.storage = storage or "lineoa-storage.json"
         self._storage_cache = None
+        self.rate_limit_config = RateLimitConfig(
+            limit=int(rate_limit),
+            window=float(rate_limit_window),
+            enabled=bool(rate_limit_enabled),
+        )
+        self.rate_limit = self.rate_limit_config.limit
+        self.rate_limit_window = self.rate_limit_config.window
+        self.rate_limit_enabled = self.rate_limit_config.enabled
+        self._rate_limit_lock = threading.RLock()
         self._auth = AuthService(cookie_store_path=self.storage)
         self._session = None
         self._user_info = None
@@ -24,10 +44,7 @@ class LINELib:
             login_result = self._auth.login_with_email_and_2fa(email, password, get_2fa_code_callback=None)
             self._session = login_result.get("session")
             self._user_info = login_result.get("user_info")
-            for c in self._session.cookies:
-                if c.name == "XSRF-TOKEN" and "chat.line.biz" in c.domain:
-                    self._xsrf_token = c.value
-                    break
+            self._xsrf_token = get_xsrf_token(self._session)
         if self._session is None:
             self._session = requests.Session()
         self._chat_service = ChatService()
@@ -71,8 +88,8 @@ class LINELib:
         data = self._load_storage() or {}
         timestamps = data.get("SendTimestamps", [])
         timestamps.append(timestamp)
-        if len(timestamps) > 20:
-            timestamps = timestamps[-20:]
+        if len(timestamps) > self.rate_limit:
+            timestamps = timestamps[-self.rate_limit:]
         data["SendTimestamps"] = timestamps
         self._save_storage(data)
 
@@ -83,14 +100,66 @@ class LINELib:
         if not timestamps:
             return
         now = time.time()
-        cleaned = [t for t in timestamps if now - t < 60]
-        if len(cleaned) > 20:
-            cleaned = cleaned[-20:]
+        cleaned = [t for t in timestamps if now - t < self.rate_limit_window]
+        if len(cleaned) > self.rate_limit:
+            cleaned = cleaned[-self.rate_limit:]
         if cleaned != timestamps:
             data["SendTimestamps"] = cleaned
             self._save_storage(data)
 
-    def get_streaming_api_token_and_listen_stream_events(self, bot_id: str, device_type: str = "", client_type: str = "PC", ping_secs: int = 60, last_event_id: Optional[str] = None, on_event: Optional[Callable[[Dict[str, Any]], None]] = None) -> None:
+    def check_rate_limit(self) -> Dict[str, Any]:
+        """Return current send rate-limit status without reserving a send slot."""
+        if not self.rate_limit_enabled:
+            return {
+                "limited": False,
+                "remaining": None,
+                "limit": self.rate_limit,
+                "window": self.rate_limit_window,
+                "ratelimit_after": 0,
+            }
+        with self._rate_limit_lock:
+            timestamps = self.get_send_timestamps()
+            limited = ratelimiter(timestamps, self.rate_limit, self.rate_limit_window)
+            return {
+                "limited": limited,
+                "remaining": max(self.rate_limit - len(timestamps), 0),
+                "limit": self.rate_limit,
+                "window": self.rate_limit_window,
+                "ratelimit_after": ratelimit_after(timestamps, self.rate_limit, self.rate_limit_window) if limited else 0,
+            }
+
+    def reset_rate_limit(self) -> None:
+        """Clear locally stored send timestamps."""
+        with self._rate_limit_lock:
+            data = self._load_storage() or {}
+            data["SendTimestamps"] = []
+            self._save_storage(data)
+
+    def _reserve_send_slot(self) -> Optional[Dict[str, Any]]:
+        if not self.rate_limit_enabled:
+            return None
+        with self._rate_limit_lock:
+            timestamps = self.get_send_timestamps()
+            if ratelimiter(timestamps, self.rate_limit, self.rate_limit_window):
+                return {
+                    "ratelimit": True,
+                    "ratelimit_after": ratelimit_after(timestamps, self.rate_limit, self.rate_limit_window),
+                    "limit": self.rate_limit,
+                    "window": self.rate_limit_window,
+                }
+            self.add_send_timestamp(time.time())
+            return None
+
+    def get_streaming_api_token_and_listen_stream_events(
+        self,
+        bot_id: str,
+        device_type: str = "",
+        client_type: str = "PC",
+        ping_secs: int = 60,
+        last_event_id: Optional[str] = None,
+        on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
+        stop_event: Optional[Callable[[], bool]] = None,
+    ) -> Optional[str]:
         """
         streamingApiToken取得→SSE接続を一連で行う
         :param bot_id: BotのID
@@ -100,25 +169,26 @@ class LINELib:
         :param last_event_id: 前回受信したイベントID（省略可）
         :param on_event: イベント受信時のコールバック (dict)
         """
-        try:
-            token_info = self._chat_service.get_streaming_api_token(bot_id, session=self._session, xsrf_token=self._xsrf_token)
-            streaming_api_token = token_info.get("streamingApiToken")
-            if not isinstance(streaming_api_token, str) or not streaming_api_token:
-                raise LINEOAError("streamingApiToken is missing or invalid")
-            last_event_id = last_event_id or token_info.get("lastEventId")
-            for event in self._chat_service.stream_events(
-                streaming_api_token,
-                device_type=device_type,
-                client_type=client_type,
-                ping_secs=ping_secs,
-                last_event_id=last_event_id,
-                session=self._session,
-                xsrf_token=self._xsrf_token
-            ):
-                if on_event:
-                    on_event(event)
-        except Exception as e:
-            print("[EXCEPTION in get_streaming_api_token_and_listen_stream_events]", e)
+        token_info = self._chat_service.get_streaming_api_token(bot_id, session=self._session, xsrf_token=self._xsrf_token)
+        streaming_api_token = token_info.get("streamingApiToken")
+        if not isinstance(streaming_api_token, str) or not streaming_api_token:
+            raise LINEOAError("streamingApiToken is missing or invalid")
+        current_last_event_id = last_event_id or token_info.get("lastEventId")
+        for event in self._chat_service.stream_events(
+            streaming_api_token,
+            device_type=device_type,
+            client_type=client_type,
+            ping_secs=ping_secs,
+            last_event_id=current_last_event_id,
+            session=self._session,
+            xsrf_token=self._xsrf_token,
+            stop_event=stop_event,
+        ):
+            if event.get("id"):
+                current_last_event_id = event["id"]
+            if on_event:
+                on_event(event)
+        return current_last_event_id
 
     def get_chat_members(self, bot_id=None, chat_id=None, limit: int = 100) -> Dict[str, Any]:
         """チャットメンバー一覧取得"""
@@ -137,15 +207,23 @@ class LINELib:
             bot_id = next(iter(self.bots.ids.values()), None)
         if not bot_id:
             raise LINEOAError("No bot found")
-        timestamps = self.get_send_timestamps()
-        if ratelimiter(timestamps):
-            return {"ratelimit": True, "ratelimit_after": ratelimit_after(timestamps)}
-        self.add_send_timestamp(time.time())
+        limited = self._reserve_send_slot()
+        if limited:
+            return limited
         return self._chat_service.send_file(
             bot_id, chat_id, file_path, session=self._session, xsrf_token=self._xsrf_token
         )
     
-    def listen_stream_events(self, streaming_api_token: str, device_type: str = "", client_type: str = "PC", ping_secs: int = 60, last_event_id: Optional[str] = None, on_event: Optional[Callable[[Dict[str, Any]], None]] = None) -> None:
+    def listen_stream_events(
+        self,
+        streaming_api_token: str,
+        device_type: str = "",
+        client_type: str = "PC",
+        ping_secs: int = 60,
+        last_event_id: Optional[str] = None,
+        on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
+        stop_event: Optional[Callable[[], bool]] = None,
+    ) -> Optional[str]:
         """
         chat-streaming-api.line.biz SSEイベント受信
         :param streaming_api_token: SSE用トークン
@@ -155,17 +233,22 @@ class LINELib:
         :param last_event_id: 前回受信したイベントID（省略可）
         :param on_event: イベント受信時のコールバック (dict)
         """
+        current_last_event_id = last_event_id
         for event in self._chat_service.stream_events(
             streaming_api_token,
             device_type=device_type,
             client_type=client_type,
             ping_secs=ping_secs,
-            last_event_id=last_event_id,
+            last_event_id=current_last_event_id,
             session=self._session,
-            xsrf_token=self._xsrf_token
+            xsrf_token=self._xsrf_token,
+            stop_event=stop_event,
         ):
+            if event.get("id"):
+                current_last_event_id = event["id"]
             if on_event:
                 on_event(event)
+        return current_last_event_id
 
     def get_chat_messages(self, bot_id: str, chat_id: str, limit: int = 50, before: Optional[str] = None, after: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -185,14 +268,20 @@ class LINELib:
             after=after
         )
 
-    def listen_messages(self, bot_id: str, chat_id: str, on_message: Optional[Callable[[Dict[str, Any]], None]] = None) -> None:
+    def listen_messages(
+        self,
+        bot_id: str,
+        chat_id: str,
+        on_message: Optional[Callable[[Dict[str, Any]], None]] = None,
+        stop_event: Optional[Callable[[], bool]] = None,
+    ) -> None:
         """
         指定チャットのメッセージをリアルタイムで監視 (SSE)
         :param bot_id: BotのID
         :param chat_id: チャットID
         :param on_message: 新着メッセージ受信時のコールバック (dict)
         """
-        return self._chat_service.listen_messages(bot_id, chat_id, on_message)
+        return self._chat_service.listen_messages(bot_id, chat_id, on_message, session=self._session, stop_event=stop_event)
 
     def get_bots(self):
         if self._bots is None:
@@ -222,9 +311,9 @@ class LINELib:
             bot_id = next(iter(self.bots.ids.values()), None)
         if not bot_id:
             raise LINEOAError("No bot found")
-        timestamps = self.get_send_timestamps()
-        if ratelimiter(timestamps):
-            return {"ratelimit": True, "ratelimit_after": ratelimit_after(timestamps)}
+        limited = self._reserve_send_slot()
+        if limited:
+            return limited
         now = int(time.time() * 1000)
         send_id = f"{user_id}_{now}_{random.randint(1000000,9999999)}"
         payload = {
@@ -236,7 +325,6 @@ class LINELib:
         if quoteToken:
             payload["quoteToken"] = quoteToken
         self.set_final_send_time(int(time.time()))
-        self.add_send_timestamp(time.time())
         return self._chat_service.send_message(
             bot_id, user_id, payload, session=self._session, xsrf_token=self._xsrf_token
         )
@@ -246,6 +334,9 @@ class LINELib:
             bot_id = next(iter(self.bots.ids.values()), None)
         if not bot_id:
             raise LINEOAError("No bot found")
+        limited = self._reserve_send_slot()
+        if limited:
+            return limited
         now = int(time.time() * 1000)
         send_id = f"{user_id}_{now}_{random.randint(1000000,9999999)}"
         payload = {"id": "", "type": "textV2", "text": context, "sendId": send_id}
@@ -253,18 +344,16 @@ class LINELib:
             payload["quoteToken"] = quoteToken
         cookies = {}
         if hasattr(self, '_session') and isinstance(self._session, requests.Session):
-            for c in self._session.cookies:
-                cookies[c.name] = c.value
+            cookies = get_cookie_dict(self._session)
         return await self._chat_service.async_send_message(bot_id, user_id, payload, cookies=cookies, xsrf_token=self._xsrf_token)
     
     def send_mention(self, bot_id: str, chat_id: str, mentionee_id: str) -> Dict[str, Any]:
         """
         メンション送信（レートリミット判定あり）
         """
-        timestamps = self.get_send_timestamps()
-        if ratelimiter(timestamps):
-            return {"ratelimit": True, "ratelimit_after": ratelimit_after(timestamps)}
-        self.add_send_timestamp(time.time())
+        limited = self._reserve_send_slot()
+        if limited:
+            return limited
         return self._chat_service.send_mention(bot_id, chat_id, mentionee_id, session=self._session, xsrf_token=self._xsrf_token)
 
     def sendMessage(self, user_id: str, text: str, bot_id: Optional[str] = None, quoteToken: Optional[str] = None):
@@ -299,10 +388,7 @@ class LINELib:
             session.cookies.set(c["name"], c["value"], domain=c.get("domain"))
         self._session = session
         self._user_info = {"email": data.get("email"), "user_name": data.get("user_name")}
-        for c in session.cookies:
-            if c.name == "XSRF-TOKEN" and "chat.line.biz" in c.domain:
-                self._xsrf_token = c.value
-                break
+        self._xsrf_token = get_xsrf_token(session)
 
     async def async_send_file(self, chat_id: str, file_path: str, bot_id: Optional[str] = None) -> Dict[str, Any]:
         """Async wrapper for sending a file."""
@@ -310,15 +396,20 @@ class LINELib:
             bot_id = next(iter(self.bots.ids.values()), None)
         if not bot_id:
             raise LINEOAError("No bot found")
+        limited = self._reserve_send_slot()
+        if limited:
+            return limited
         cookies = {}
         if hasattr(self, '_session') and isinstance(self._session, requests.Session):
-            for c in self._session.cookies:
-                cookies[c.name] = c.value
+            cookies = get_cookie_dict(self._session)
         return await self._chat_service.async_send_file(bot_id, chat_id, file_path, cookies=cookies, xsrf_token=self._xsrf_token)
 
     async def async_send_mention(self, bot_id: str, chat_id: str, mentionee_id: str) -> Dict[str, Any]:
         """Async wrapper for sending a mention."""
         mention_text = f"@{mentionee_id} "
+        limited = self._reserve_send_slot()
+        if limited:
+            return limited
         payload = {
             "type": "text",
             "text": mention_text,
@@ -326,16 +417,14 @@ class LINELib:
         }
         cookies = {}
         if hasattr(self, '_session') and isinstance(self._session, requests.Session):
-            for c in self._session.cookies:
-                cookies[c.name] = c.value
+            cookies = get_cookie_dict(self._session)
         return await self._chat_service.async_send_message(bot_id, chat_id, payload, cookies=cookies, xsrf_token=self._xsrf_token)
 
     async def async_get_chat_messages(self, bot_id: str, chat_id: str, limit: int = 50, before: Optional[str] = None, after: Optional[str] = None) -> Dict[str, Any]:
         """Async wrapper for fetching chat messages."""
         cookies = {}
         if hasattr(self, '_session') and isinstance(self._session, requests.Session):
-            for c in self._session.cookies:
-                cookies[c.name] = c.value
+            cookies = get_cookie_dict(self._session)
         return await self._chat_service.async_get_chat_messages(bot_id, chat_id, cookies=cookies, xsrf_token=self._xsrf_token, limit=limit, before=before, after=after)
 
     @property

@@ -10,6 +10,8 @@ from .exceptions import LINEOAError
 from .util import merge_dicts
 import requests as _requests
 from .logger import lineoa_logger
+from .sse import SSEParser
+from .session_utils import cookie_header, get_cookie_dict, get_stream_cookie_dict, get_xsrf_token
 
 class ChatService:
     def __init__(self):
@@ -59,14 +61,7 @@ class ChatService:
             dict: API response
         """
         req = session if session else requests
-        cookie_dict = {}
-        if isinstance(req, _requests.Session):
-            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
-                cookie_dict.update(req.cookies.get_dict(domain=dom))
-        if cookie_dict:
-            cookie_str = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
-        else:
-            cookie_str = ""
+        cookie_str = cookie_header(get_cookie_dict(req)) if isinstance(req, _requests.Session) else ""
         url_upload = f"https://chat.line.biz/api/v1/bots/{bot_id}/messages/{chat_id}/uploadFile"
         headers_upload = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
@@ -132,7 +127,7 @@ class ChatService:
         if xsrf_token:
             headers_upload["X-XSRF-TOKEN"] = xsrf_token
         if cookies:
-            headers_upload["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
+            headers_upload["Cookie"] = cookie_header(cookies)
 
         own_session = False
         if session is None:
@@ -140,12 +135,13 @@ class ChatService:
             own_session = True
         try:
             data = aiohttp.FormData()
-            data.add_field('file', open(file_path, 'rb'), filename=os.path.basename(file_path), content_type='application/octet-stream')
-            async with session.post(url_upload, headers=headers_upload, data=data) as resp_upload:
-                text = await resp_upload.text()
-                if resp_upload.status >= 400:
-                    raise LINEOAError(f"uploadFile failed: {resp_upload.status} {text}")
-                j = await resp_upload.json()
+            with open(file_path, 'rb') as f:
+                data.add_field('file', f, filename=os.path.basename(file_path), content_type='application/octet-stream')
+                async with session.post(url_upload, headers=headers_upload, data=data) as resp_upload:
+                    text = await resp_upload.text()
+                    if resp_upload.status >= 400:
+                        raise LINEOAError(f"uploadFile failed: {resp_upload.status} {text}")
+                    j = await resp_upload.json()
             token = j.get('contentMessageToken')
             if not token:
                 raise LINEOAError('No contentMessageToken returned')
@@ -162,7 +158,7 @@ class ChatService:
             if xsrf_token:
                 headers_bulk["x-xsrf-token"] = xsrf_token
             if cookies:
-                headers_bulk["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
+                headers_bulk["Cookie"] = cookie_header(cookies)
 
             send_id = f"{chat_id}_{int(time.time()*1000)}_{random.randint(1000000,9999999)}"
             payload = {"items": [{"sendId": send_id, "contentMessageToken": token}]}
@@ -226,7 +222,7 @@ class ChatService:
         if xsrf_token:
             headers["x-xsrf-token"] = xsrf_token
         if cookies:
-            headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
+            headers["Cookie"] = cookie_header(cookies)
         own_session = False
         if session is None:
             session = aiohttp.ClientSession()
@@ -241,7 +237,15 @@ class ChatService:
             if own_session:
                 await session.close()
 
-    def listen_messages(self, bot_id: str, chat_id: str, on_message: Optional[Callable[[Dict[str, Any]], None]] = None, session: Optional[requests.Session] = None) -> None:
+    def listen_messages(
+        self,
+        bot_id: str,
+        chat_id: str,
+        on_message: Optional[Callable[[Dict[str, Any]], None]] = None,
+        session: Optional[requests.Session] = None,
+        stop_event: Optional[Callable[[], bool]] = None,
+        timeout: int = 90,
+    ) -> None:
         """
         Listen for real-time messages in a chat (SSE).
         Args:
@@ -268,21 +272,23 @@ class ChatService:
         xsrf_token = None
         req = session if session else requests
         if isinstance(req, _requests.Session):
-            for c in req.cookies:
-                if c.name == "XSRF-TOKEN" and "chat.line.biz" in c.domain:
-                    xsrf_token = c.value
-                    break
+            xsrf_token = get_xsrf_token(req)
         if xsrf_token:
             headers["X-XSRF-TOKEN"] = xsrf_token
-        resp = req.get(url, headers=headers, stream=True)
-        if resp.status_code != 200:
-            lineoa_logger.error(f"[listen_messages] HTTP {resp.status_code}: {resp.text}")
-            return
-        for event in client:
-            if event.event == "chat":
-                data = json.loads(event.data)
+        with req.get(url, headers=headers, stream=True, timeout=timeout) as resp:
+            if resp.status_code != 200:
+                raise LINEOAError(f"[listen_messages] HTTP {resp.status_code}: {resp.text}")
+            for event in SSEParser.iter_events(resp.iter_lines(decode_unicode=True)):
+                if stop_event and stop_event():
+                    break
+                if event.event != "chat":
+                    continue
+                data = event.payload
                 if on_message:
-                    on_message(data)
+                    try:
+                        on_message(data)
+                    except Exception as e:
+                        lineoa_logger.error(f"[listen_messages] callback error: {e}")
                 else:
                     lineoa_logger.info(f"[SSE chat event] {data}")
 
@@ -322,18 +328,14 @@ class ChatService:
             "x-oa-chat-client-version": self.chat_client_version,
         }
         req = session if session else requests
-        cookie_dict = {}
-        xsrf_cookie = None
         if isinstance(req, _requests.Session):
-            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
-                cookie_dict.update(req.cookies.get_dict(domain=dom))
-            for c in req.cookies:
-                if c.name == "XSRF-TOKEN" and "chat.line.biz" in c.domain:
-                    xsrf_cookie = c.value
-                    break
+            cookie_dict = get_cookie_dict(req)
+            xsrf_cookie = get_xsrf_token(req)
+        else:
+            cookie_dict = {}
+            xsrf_cookie = None
         if cookie_dict:
-            cookie_str = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
-            headers["cookie"] = cookie_str
+            headers["cookie"] = cookie_header(cookie_dict)
         if xsrf_token:
             headers["X-XSRF-TOKEN"] = xsrf_token
         elif xsrf_cookie:
@@ -428,23 +430,14 @@ class ChatService:
             "x-oa-chat-client-version": self.chat_client_version,
         }
         req = session if session else requests
-        cookie_dict = {}
-        xsrf_cookie = None
         if isinstance(req, _requests.Session):
-            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
-                try:
-                    cookie_dict.update(req.cookies.get_dict(domain=dom))
-                except Exception:
-                    pass
-            for c in req.cookies:
-                domain = getattr(c, 'domain', '')
-                name = getattr(c, 'name', None)
-                if name == "XSRF-TOKEN" and "chat.line.biz" in domain:
-                    xsrf_cookie = c.value
-                    break
+            cookie_dict = get_cookie_dict(req)
+            xsrf_cookie = get_xsrf_token(req)
+        else:
+            cookie_dict = {}
+            xsrf_cookie = None
         if cookie_dict:
-            cookie_str = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
-            headers["cookie"] = cookie_str
+            headers["cookie"] = cookie_header(cookie_dict)
         if xsrf_token:
             headers["x-xsrf-token"] = xsrf_token
         elif xsrf_cookie:
@@ -617,7 +610,18 @@ class ChatService:
         except Exception as e:
             raise LINEOAError(f"get_streaming_api_token: {e}")
 
-    def stream_events(self, streaming_api_token: str, device_type: str = "", client_type: str = "PC", ping_secs: int = 60, last_event_id: Optional[str] = None, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Generator[Dict[str, Any], None, None]:
+    def stream_events(
+        self,
+        streaming_api_token: str,
+        device_type: str = "",
+        client_type: str = "PC",
+        ping_secs: int = 60,
+        last_event_id: Optional[str] = None,
+        session: Optional[requests.Session] = None,
+        xsrf_token: Optional[str] = None,
+        stop_event: Optional[Callable[[], bool]] = None,
+        timeout: int = 90,
+    ) -> Generator[Dict[str, Any], None, None]:
         """
         Stream events from SSE endpoint.
         Args:
@@ -659,52 +663,22 @@ class ChatService:
         if xsrf_token:
             headers["X-XSRF-TOKEN"] = xsrf_token
         if session:
-            cookie_dict = {}
-            for c in session.cookies:
-                if "chat.line.biz" in c.domain:
-                    cookie_dict[c.name] = c.value
-            for c in session.cookies:
-                if c.name in ["__Host-chat-ses", "chat-device-group", "XSRF-TOKEN"]:
-                    cookie_dict[c.name] = str(c.value)
-            cookie_str = "; ".join([f"{k}={v}" for k, v in cookie_dict.items()])
-            headers["cookie"] = cookie_str
+            headers["cookie"] = cookie_header(get_stream_cookie_dict(session))
             req = session
         else:
             req = requests
-        with req.get(base_url, headers=headers, params=params, stream=True, timeout=90) as resp:
+        with req.get(base_url, headers=headers, params=params, stream=True, timeout=timeout) as resp:
             if not resp.ok:
                 raise LINEOAError(f"HTTP {resp.status_code}: {resp.text}")
-            event_id = None
-            event_type = None
-            data_lines = []
-            for line in resp.iter_lines(decode_unicode=True):
-                if line is None:
-                    continue
-                line = line.strip()
-                if line.startswith(":") or not line:
-                    if data_lines:
-                        data = "\n".join(data_lines)
-                        try:
-                            payload = json.loads(data)
-                        except Exception:
-                            payload = data
-                        result = {
-                            "id": event_id,
-                            "type": event_type,
-                            "payload": payload,
-                            "time": datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                        }
-                        yield result
-                        data_lines = []
-                        event_id = None
-                        event_type = None
-                    continue
-                if line.startswith("id:"):
-                    event_id = line[3:].strip()
-                elif line.startswith("event:"):
-                    event_type = line[6:].strip()
-                elif line.startswith("data:"):
-                    data_lines.append(line[5:].strip())
+            for event in SSEParser.iter_events(resp.iter_lines(decode_unicode=True)):
+                if stop_event and stop_event():
+                    break
+                yield {
+                    "id": event.id,
+                    "type": event.event,
+                    "payload": event.payload,
+                    "time": datetime.now().strftime("%H:%M:%S.%f")[:-3],
+                }
 
     def send_message(self, bot_id: str, chat_id: str, message: Dict[str, Any], session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -736,13 +710,9 @@ class ChatService:
         if xsrf_token:
             browser_headers["x-xsrf-token"] = xsrf_token
         req = session if session else requests
-        cookie_dict = {}
-        if isinstance(req, _requests.Session):
-            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
-                cookie_dict.update(req.cookies.get_dict(domain=dom))
+        cookie_dict = get_cookie_dict(req) if isinstance(req, _requests.Session) else {}
         if cookie_dict:
-            cookie_str = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
-            browser_headers["Cookie"] = cookie_str
+            browser_headers["Cookie"] = cookie_header(cookie_dict)
         browser_headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.5735.199 Safari/537.36"
         browser_headers["sec-ch-ua"] = '"Not.A/Brand";v="8", "Chromium";v="114", "Google Chrome";v="114"'
         browser_headers["sec-ch-ua-mobile"] = "?0"
@@ -777,8 +747,7 @@ class ChatService:
         if xsrf_token:
             headers["x-xsrf-token"] = xsrf_token
         if cookies:
-            cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
-            headers["Cookie"] = cookie_str
+            headers["Cookie"] = cookie_header(cookies)
 
         own_session = False
         if session is None:
