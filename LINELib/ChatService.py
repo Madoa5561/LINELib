@@ -10,8 +10,6 @@ from .exceptions import LINEOAError
 from .util import merge_dicts
 import requests as _requests
 from .logger import lineoa_logger
-from .sse import SSEParser
-from .session_utils import cookie_header, get_cookie_dict, get_stream_cookie_dict, get_xsrf_token
 
 class ChatService:
     def __init__(self):
@@ -61,7 +59,14 @@ class ChatService:
             dict: API response
         """
         req = session if session else requests
-        cookie_str = cookie_header(get_cookie_dict(req)) if isinstance(req, _requests.Session) else ""
+        cookie_dict = {}
+        if isinstance(req, _requests.Session):
+            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
+                cookie_dict.update(req.cookies.get_dict(domain=dom))
+        if cookie_dict:
+            cookie_str = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
+        else:
+            cookie_str = ""
         url_upload = f"https://chat.line.biz/api/v1/bots/{bot_id}/messages/{chat_id}/uploadFile"
         headers_upload = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
@@ -127,7 +132,7 @@ class ChatService:
         if xsrf_token:
             headers_upload["X-XSRF-TOKEN"] = xsrf_token
         if cookies:
-            headers_upload["Cookie"] = cookie_header(cookies)
+            headers_upload["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
 
         own_session = False
         if session is None:
@@ -135,13 +140,12 @@ class ChatService:
             own_session = True
         try:
             data = aiohttp.FormData()
-            with open(file_path, 'rb') as f:
-                data.add_field('file', f, filename=os.path.basename(file_path), content_type='application/octet-stream')
-                async with session.post(url_upload, headers=headers_upload, data=data) as resp_upload:
-                    text = await resp_upload.text()
-                    if resp_upload.status >= 400:
-                        raise LINEOAError(f"uploadFile failed: {resp_upload.status} {text}")
-                    j = await resp_upload.json()
+            data.add_field('file', open(file_path, 'rb'), filename=os.path.basename(file_path), content_type='application/octet-stream')
+            async with session.post(url_upload, headers=headers_upload, data=data) as resp_upload:
+                text = await resp_upload.text()
+                if resp_upload.status >= 400:
+                    raise LINEOAError(f"uploadFile failed: {resp_upload.status} {text}")
+                j = await resp_upload.json()
             token = j.get('contentMessageToken')
             if not token:
                 raise LINEOAError('No contentMessageToken returned')
@@ -158,7 +162,7 @@ class ChatService:
             if xsrf_token:
                 headers_bulk["x-xsrf-token"] = xsrf_token
             if cookies:
-                headers_bulk["Cookie"] = cookie_header(cookies)
+                headers_bulk["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
 
             send_id = f"{chat_id}_{int(time.time()*1000)}_{random.randint(1000000,9999999)}"
             payload = {"items": [{"sendId": send_id, "contentMessageToken": token}]}
@@ -222,7 +226,7 @@ class ChatService:
         if xsrf_token:
             headers["x-xsrf-token"] = xsrf_token
         if cookies:
-            headers["Cookie"] = cookie_header(cookies)
+            headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
         own_session = False
         if session is None:
             session = aiohttp.ClientSession()
@@ -237,15 +241,7 @@ class ChatService:
             if own_session:
                 await session.close()
 
-    def listen_messages(
-        self,
-        bot_id: str,
-        chat_id: str,
-        on_message: Optional[Callable[[Dict[str, Any]], None]] = None,
-        session: Optional[requests.Session] = None,
-        stop_event: Optional[Callable[[], bool]] = None,
-        timeout: int = 90,
-    ) -> None:
+    def listen_messages(self, bot_id: str, chat_id: str, on_message: Optional[Callable[[Dict[str, Any]], None]] = None, session: Optional[requests.Session] = None) -> None:
         """
         Listen for real-time messages in a chat (SSE).
         Args:
@@ -272,23 +268,21 @@ class ChatService:
         xsrf_token = None
         req = session if session else requests
         if isinstance(req, _requests.Session):
-            xsrf_token = get_xsrf_token(req)
+            for c in req.cookies:
+                if c.name == "XSRF-TOKEN" and "chat.line.biz" in c.domain:
+                    xsrf_token = c.value
+                    break
         if xsrf_token:
             headers["X-XSRF-TOKEN"] = xsrf_token
-        with req.get(url, headers=headers, stream=True, timeout=timeout) as resp:
-            if resp.status_code != 200:
-                raise LINEOAError(f"[listen_messages] HTTP {resp.status_code}: {resp.text}")
-            for event in SSEParser.iter_events(resp.iter_lines(decode_unicode=True)):
-                if stop_event and stop_event():
-                    break
-                if event.event != "chat":
-                    continue
-                data = event.payload
+        resp = req.get(url, headers=headers, stream=True)
+        if resp.status_code != 200:
+            lineoa_logger.error(f"[listen_messages] HTTP {resp.status_code}: {resp.text}")
+            return
+        for event in client:
+            if event.event == "chat":
+                data = json.loads(event.data)
                 if on_message:
-                    try:
-                        on_message(data)
-                    except Exception as e:
-                        lineoa_logger.error(f"[listen_messages] callback error: {e}")
+                    on_message(data)
                 else:
                     lineoa_logger.info(f"[SSE chat event] {data}")
 
@@ -328,14 +322,18 @@ class ChatService:
             "x-oa-chat-client-version": self.chat_client_version,
         }
         req = session if session else requests
+        cookie_dict = {}
+        xsrf_cookie = None
         if isinstance(req, _requests.Session):
-            cookie_dict = get_cookie_dict(req)
-            xsrf_cookie = get_xsrf_token(req)
-        else:
-            cookie_dict = {}
-            xsrf_cookie = None
+            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
+                cookie_dict.update(req.cookies.get_dict(domain=dom))
+            for c in req.cookies:
+                if c.name == "XSRF-TOKEN" and "chat.line.biz" in c.domain:
+                    xsrf_cookie = c.value
+                    break
         if cookie_dict:
-            headers["cookie"] = cookie_header(cookie_dict)
+            cookie_str = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
+            headers["cookie"] = cookie_str
         if xsrf_token:
             headers["X-XSRF-TOKEN"] = xsrf_token
         elif xsrf_cookie:
@@ -430,14 +428,23 @@ class ChatService:
             "x-oa-chat-client-version": self.chat_client_version,
         }
         req = session if session else requests
+        cookie_dict = {}
+        xsrf_cookie = None
         if isinstance(req, _requests.Session):
-            cookie_dict = get_cookie_dict(req)
-            xsrf_cookie = get_xsrf_token(req)
-        else:
-            cookie_dict = {}
-            xsrf_cookie = None
+            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
+                try:
+                    cookie_dict.update(req.cookies.get_dict(domain=dom))
+                except Exception:
+                    pass
+            for c in req.cookies:
+                domain = getattr(c, 'domain', '')
+                name = getattr(c, 'name', None)
+                if name == "XSRF-TOKEN" and "chat.line.biz" in domain:
+                    xsrf_cookie = c.value
+                    break
         if cookie_dict:
-            headers["cookie"] = cookie_header(cookie_dict)
+            cookie_str = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
+            headers["cookie"] = cookie_str
         if xsrf_token:
             headers["x-xsrf-token"] = xsrf_token
         elif xsrf_cookie:
@@ -610,18 +617,7 @@ class ChatService:
         except Exception as e:
             raise LINEOAError(f"get_streaming_api_token: {e}")
 
-    def stream_events(
-        self,
-        streaming_api_token: str,
-        device_type: str = "",
-        client_type: str = "PC",
-        ping_secs: int = 60,
-        last_event_id: Optional[str] = None,
-        session: Optional[requests.Session] = None,
-        xsrf_token: Optional[str] = None,
-        stop_event: Optional[Callable[[], bool]] = None,
-        timeout: int = 90,
-    ) -> Generator[Dict[str, Any], None, None]:
+    def stream_events(self, streaming_api_token: str, device_type: str = "", client_type: str = "PC", ping_secs: int = 60, last_event_id: Optional[str] = None, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Generator[Dict[str, Any], None, None]:
         """
         Stream events from SSE endpoint.
         Args:
@@ -663,22 +659,52 @@ class ChatService:
         if xsrf_token:
             headers["X-XSRF-TOKEN"] = xsrf_token
         if session:
-            headers["cookie"] = cookie_header(get_stream_cookie_dict(session))
+            cookie_dict = {}
+            for c in session.cookies:
+                if "chat.line.biz" in c.domain:
+                    cookie_dict[c.name] = c.value
+            for c in session.cookies:
+                if c.name in ["__Host-chat-ses", "chat-device-group", "XSRF-TOKEN"]:
+                    cookie_dict[c.name] = str(c.value)
+            cookie_str = "; ".join([f"{k}={v}" for k, v in cookie_dict.items()])
+            headers["cookie"] = cookie_str
             req = session
         else:
             req = requests
-        with req.get(base_url, headers=headers, params=params, stream=True, timeout=timeout) as resp:
+        with req.get(base_url, headers=headers, params=params, stream=True, timeout=90) as resp:
             if not resp.ok:
                 raise LINEOAError(f"HTTP {resp.status_code}: {resp.text}")
-            for event in SSEParser.iter_events(resp.iter_lines(decode_unicode=True)):
-                if stop_event and stop_event():
-                    break
-                yield {
-                    "id": event.id,
-                    "type": event.event,
-                    "payload": event.payload,
-                    "time": datetime.now().strftime("%H:%M:%S.%f")[:-3],
-                }
+            event_id = None
+            event_type = None
+            data_lines = []
+            for line in resp.iter_lines(decode_unicode=True):
+                if line is None:
+                    continue
+                line = line.strip()
+                if line.startswith(":") or not line:
+                    if data_lines:
+                        data = "\n".join(data_lines)
+                        try:
+                            payload = json.loads(data)
+                        except Exception:
+                            payload = data
+                        result = {
+                            "id": event_id,
+                            "type": event_type,
+                            "payload": payload,
+                            "time": datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                        }
+                        yield result
+                        data_lines = []
+                        event_id = None
+                        event_type = None
+                    continue
+                if line.startswith("id:"):
+                    event_id = line[3:].strip()
+                elif line.startswith("event:"):
+                    event_type = line[6:].strip()
+                elif line.startswith("data:"):
+                    data_lines.append(line[5:].strip())
 
     def send_message(self, bot_id: str, chat_id: str, message: Dict[str, Any], session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -710,9 +736,13 @@ class ChatService:
         if xsrf_token:
             browser_headers["x-xsrf-token"] = xsrf_token
         req = session if session else requests
-        cookie_dict = get_cookie_dict(req) if isinstance(req, _requests.Session) else {}
+        cookie_dict = {}
+        if isinstance(req, _requests.Session):
+            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
+                cookie_dict.update(req.cookies.get_dict(domain=dom))
         if cookie_dict:
-            browser_headers["Cookie"] = cookie_header(cookie_dict)
+            cookie_str = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
+            browser_headers["Cookie"] = cookie_str
         browser_headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.5735.199 Safari/537.36"
         browser_headers["sec-ch-ua"] = '"Not.A/Brand";v="8", "Chromium";v="114", "Google Chrome";v="114"'
         browser_headers["sec-ch-ua-mobile"] = "?0"
@@ -747,7 +777,8 @@ class ChatService:
         if xsrf_token:
             headers["x-xsrf-token"] = xsrf_token
         if cookies:
-            headers["Cookie"] = cookie_header(cookies)
+            cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
+            headers["Cookie"] = cookie_str
 
         own_session = False
         if session is None:
@@ -762,6 +793,357 @@ class ChatService:
             if own_session:
                 await session.close()
         return {}
+
+    def send_flex_message(
+        self,
+        bot_id: str,
+        chat_id: str,
+        card_type_message_id: int,
+        session: Optional[requests.Session] = None,
+        xsrf_token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Send a Flex (cardType) message to a chat.
+        Args:
+            bot_id: Bot ID
+            chat_id: Chat ID
+            card_type_message_id: Flex message template ID (cardTypeMessageId)
+            session: Authenticated requests.Session
+            xsrf_token: XSRF token
+        Returns:
+            dict: Always empty on success
+        """
+        url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/messages/send"
+        send_id = f"{chat_id}_{int(time.time() * 1000)}_{random.randint(1000000, 9999999)}"
+        payload = {
+            "id": "",
+            "type": "cardType",
+            "cardTypeMessageId": card_type_message_id,
+            "sendId": send_id,
+        }
+        browser_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.5735.199 Safari/537.36",
+            "sec-ch-ua": '"Not.A/Brand";v="8", "Chromium";v="114", "Google Chrome";v="114"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "Origin": "https://chat.line.biz",
+            "Referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
+            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
+            "x-oa-chat-client-version": self.chat_client_version,
+        }
+        if xsrf_token:
+            browser_headers["x-xsrf-token"] = xsrf_token
+        req = session if session else requests
+        cookie_dict = {}
+        if isinstance(req, _requests.Session):
+            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
+                cookie_dict.update(req.cookies.get_dict(domain=dom))
+        if cookie_dict:
+            browser_headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
+        response = req.post(url, headers=browser_headers, json=payload)
+        if not response.ok:
+            raise LINEOAError(f"send_flex_message failed: HTTP {response.status_code}: {response.text}")
+        return {}
+
+    def get_flex_json(
+        self,
+        bot_id: str,
+        chat_id: str,
+        message_id: str,
+        timestamp: Optional[int] = None,
+        session: Optional[requests.Session] = None,
+        xsrf_token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Retrieve the Flex JSON of a sent cardType message.
+        Args:
+            bot_id: Bot ID
+            chat_id: Chat ID
+            message_id: Message ID returned after sending
+            timestamp: Message timestamp in milliseconds (defaults to now)
+            session: Authenticated requests.Session
+            xsrf_token: XSRF token
+        Returns:
+            dict: Flex JSON payload
+        """
+        if timestamp is None:
+            timestamp = int(time.time() * 1000)
+        url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/messages/flexJson"
+        params = {"timestamp": timestamp, "messageId": message_id}
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.5735.199 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Origin": "https://chat.line.biz",
+            "Referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
+            "x-oa-chat-client-version": self.chat_client_version,
+        }
+        if xsrf_token:
+            headers["x-xsrf-token"] = xsrf_token
+        req = session if session else requests
+        cookie_dict = {}
+        if isinstance(req, _requests.Session):
+            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
+                cookie_dict.update(req.cookies.get_dict(domain=dom))
+        if cookie_dict:
+            headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
+        response = req.get(url, headers=headers, params=params)
+        if not response.ok:
+            raise LINEOAError(f"get_flex_json failed: HTTP {response.status_code}: {response.text}")
+        return response.json()
+
+    def mark_as_read(
+        self,
+        bot_id: str,
+        chat_id: str,
+        message_id: str,
+        timestamp: Optional[int] = None,
+        session: Optional[requests.Session] = None,
+        xsrf_token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Mark a chat as read up to the specified message.
+        Args:
+            bot_id: Bot ID
+            chat_id: Chat ID
+            message_id: ID of the last message to mark as read
+            timestamp: Timestamp of the message in milliseconds (defaults to now)
+            session: Authenticated requests.Session
+            xsrf_token: XSRF token
+        Returns:
+            dict: Always empty on success
+        """
+        if timestamp is None:
+            timestamp = int(time.time() * 1000)
+        url = f"{self.v2_BASE_URL}/bots/{bot_id}/chats/{chat_id}/markAsRead"
+        payload = {
+            "lastMessage": {
+                "messageId": message_id,
+                "timestamp": timestamp,
+            }
+        }
+        browser_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.5735.199 Safari/537.36",
+            "sec-ch-ua": '"Not.A/Brand";v="8", "Chromium";v="114", "Google Chrome";v="114"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "Origin": "https://chat.line.biz",
+            "Referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
+            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
+            "x-oa-chat-client-version": self.chat_client_version,
+        }
+        if xsrf_token:
+            browser_headers["x-xsrf-token"] = xsrf_token
+        req = session if session else requests
+        cookie_dict = {}
+        if isinstance(req, _requests.Session):
+            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
+                cookie_dict.update(req.cookies.get_dict(domain=dom))
+        if cookie_dict:
+            browser_headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
+        response = req.put(url, headers=browser_headers, json=payload)
+        if not response.ok:
+            raise LINEOAError(f"mark_as_read failed: HTTP {response.status_code}: {response.text}")
+        return {}
+
+
+    def _manager_headers(self, session, at_id: str, xsrf_token=None) -> dict:
+        """manager.line.biz 用ヘッダー生成"""
+        import requests as _req
+        cookie_dict = {}
+        if isinstance(session, _req.Session):
+            for dom in ["manager.line.biz", ".line.biz", ".manager.line.biz", "chat.line.biz", ".chat.line.biz"]:
+                cookie_dict.update(session.cookies.get_dict(domain=dom))
+        h = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.5735.199 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "Origin": "https://manager.line.biz",
+            "Referer": f"https://manager.line.biz/",
+            "Cookie": "; ".join(f"{k}={v}" for k, v in cookie_dict.items()),
+        }
+        if xsrf_token:
+            h["x-xsrf-token"] = xsrf_token
+        return h
+
+    def create_card_type_message(
+        self,
+        at_id: str,
+        title: str,
+        image_url: str,
+        tag_name: str = "",
+        tag_color: str = "info",
+        description: str = "",
+        action_label: str = "",
+        action_text: str = "",
+        session=None,
+        xsrf_token: str = None,
+    ) -> int:
+        """
+        manager.line.biz 経由でカードメッセージを動的作成し、IDを返す。
+        Args:
+            at_id       : Bot の @ID（例: "@318ogzps" または "318ogzps"）
+            title       : カードタイトル（OA Manager上の管理名 & 表示タイトル）
+            image_url   : ヒーロー画像URL
+            tag_name    : タグテキスト（空文字で非表示）
+            tag_color   : タグ色 ("info" / "success" / "warning" / "danger" など)
+            description : 説明文（空文字で非表示）
+            action_label: ボタンラベル
+            action_text : ボタン押下時に送信されるテキスト
+            session     : requests.Session
+            xsrf_token  : XSRF トークン
+        Returns:
+            int: 作成されたカードの cardTypeMessageId
+        """
+        at_id = at_id.lstrip("@")
+        url = f"https://manager.line.biz/api/bots/@{at_id}/cardTypeMessages"
+        payload = {
+            "title": title,
+            "type": "Product",
+            "actions": [],
+            "origin": {
+                "title": title,
+                "type": "Product",
+                "messages": [
+                    {
+                        "title": title,
+                        "icon": {
+                            "enable": bool(tag_name),
+                            "name": tag_name,
+                            "color": tag_color,
+                            "widthMeasurement": 25.7587890625,
+                        },
+                        "image": {
+                            "isNoImage": not bool(image_url),
+                            "maxFile": 1,
+                            "list": [{"src": image_url}] if image_url else [],
+                        },
+                        "description": {
+                            "enable": bool(description),
+                            "value": description,
+                        },
+                        "price": {"enable": False, "value": "", "unit": ""},
+                        "links": [
+                            {
+                                "enable": bool(action_label),
+                                "title": action_label,
+                                "type": "Text",
+                                "shopCard": "",
+                                "message": action_text,
+                            },
+                            {"enable": False, "title": "", "type": "Choice", "url": ""},
+                        ],
+                    }
+                ],
+                "viewmore": {
+                    "enable": False,
+                    "type": "ADDITIONAL_SIMPLE",
+                    "images": [{"src": ""}],
+                    "link": {"enable": True, "title": "", "type": "Choice", "url": ""},
+                },
+            },
+        }
+        req = session if session else requests
+        headers = self._manager_headers(session, at_id, xsrf_token)
+        response = req.post(url, headers=headers, json=payload)
+        if not response.ok:
+            raise LINEOAError(f"create_card_type_message failed: HTTP {response.status_code}: {response.text}")
+        card_id = response.json().get("id")
+        if not card_id:
+            raise LINEOAError(f"create_card_type_message: no id in response: {response.text}")
+        return int(card_id)
+
+    def delete_card_type_message(
+        self,
+        at_id: str,
+        card_id: int,
+        session=None,
+        xsrf_token: str = None,
+    ) -> None:
+        """
+        作成したカードメッセージを削除する。
+        Args:
+            at_id   : Bot の @ID
+            card_id : create_card_type_message で取得した ID
+        """
+        at_id = at_id.lstrip("@")
+        url = f"https://manager.line.biz/api/bots/@{at_id}/cardTypeMessages/{card_id}"
+        req = session if session else requests
+        headers = self._manager_headers(session, at_id, xsrf_token)
+        response = req.delete(url, headers=headers)
+        if not response.ok:
+            raise LINEOAError(f"delete_card_type_message failed: HTTP {response.status_code}: {response.text}")
+
+    def create_and_send_flex(
+        self,
+        bot_id: str,
+        at_id: str,
+        chat_id: str,
+        title: str,
+        image_url: str,
+        tag_name: str = "",
+        tag_color: str = "info",
+        description: str = "",
+        action_label: str = "",
+        action_text: str = "",
+        delete_after_send: bool = True,
+        session=None,
+        xsrf_token: str = None,
+    ) -> int:
+        """
+        カードを動的作成 → 送信 → 削除（任意）を一括実行。
+        Args:
+            bot_id          : Bot ID（U から始まるID）
+            at_id           : Bot の @ID（例: "318ogzps"）
+            chat_id         : 送信先チャットID
+            delete_after_send: 送信後にカードを削除するか（デフォルト True）
+        Returns:
+            int: 使用した cardTypeMessageId
+        """
+        card_id = self.create_card_type_message(
+            at_id=at_id,
+            title=title,
+            image_url=image_url,
+            tag_name=tag_name,
+            tag_color=tag_color,
+            description=description,
+            action_label=action_label,
+            action_text=action_text,
+            session=session,
+            xsrf_token=xsrf_token,
+        )
+        lineoa_logger.info(f"create_and_send_flex: created card id={card_id}")
+        try:
+            self.send_flex_message(
+                bot_id=bot_id,
+                chat_id=chat_id,
+                card_type_message_id=card_id,
+                session=session,
+                xsrf_token=xsrf_token,
+            )
+            lineoa_logger.info(f"create_and_send_flex: sent card id={card_id} to {chat_id}")
+        finally:
+            if delete_after_send:
+                try:
+                    self.delete_card_type_message(
+                        at_id=at_id,
+                        card_id=card_id,
+                        session=session,
+                        xsrf_token=xsrf_token,
+                    )
+                    lineoa_logger.info(f"create_and_send_flex: deleted card id={card_id}")
+                except Exception as e:
+                    lineoa_logger.error(f"create_and_send_flex: delete failed (card_id={card_id}): {e}")
+        return card_id
 
     def _handle_response(self, response: requests.Response) -> None:
         if not response.ok:

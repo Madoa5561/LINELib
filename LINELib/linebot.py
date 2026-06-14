@@ -77,15 +77,15 @@ class LineBot:
     def getMembers(self, bot_id=None, chat_id=None, limit=100):
         """チャットメンバー取得"""
         return self._lib.getMembers(bot_id=str(bot_id), chat_id=str(chat_id), limit=limit)
-    
+
     def getBots(self):
         """botアカウントの一覧取得"""
         return self._lib.get_bots()
-    
+
     def getChats(self, bot_id=None, limit=100):
         """チャット一覧取得"""
         return self._lib.getChats(bot_id=str(bot_id), limit=limit)
-    
+
     def event(self, func):
         self.handlers[func.__name__] = func
         return func
@@ -179,8 +179,3 @@ class LineBot:
         self._stop_event.set()
         if self._listen_thread and self._listen_thread.is_alive():
             self._listen_thread.join(timeout=5)
-
-
-
-
-

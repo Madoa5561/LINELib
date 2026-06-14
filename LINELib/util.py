@@ -34,29 +34,24 @@ def get_groupid_from_chatid(chat_id: str) -> Optional[str]:
     data = _load_idmap()
     return data["chat_to_group"].get(chat_id)
 
-def _recent_timestamps(timestamps: list, window_seconds: float, now: Optional[float] = None) -> list:
-    now = time.time() if now is None else now
-    return [float(t) for t in timestamps if now - float(t) < window_seconds]
-
-
-def ratelimiter(timestamps: list, max_requests: int = 18, window_seconds: float = 60) -> bool:
+def ratelimiter(timestamps: list, limit: int = 18, window: float = 60) -> bool:
     """
     timestamps: list of UNIX timestamps (seconds).
-    Return True if max_requests or more messages were sent within window_seconds.
+    Return True if `limit` or more messages were sent within the last `window` seconds.
     """
-    return len(_recent_timestamps(timestamps, window_seconds)) >= max_requests
+    now = time.time()
+    recent = [t for t in timestamps if now - t < window]
+    return len(recent) >= limit
 
 
-def ratelimit_after(timestamps: list, max_requests: int = 18, window_seconds: float = 60) -> float:
+def ratelimit_after(timestamps: list, limit: int = 18, window: float = 60) -> float:
     """
-    Return the UNIX timestamp (seconds) when the ratelimit will be lifted based on the
-    max_requests-th-most-recent message. If fewer than max_requests timestamps, return 0.
+    Return the UNIX timestamp (seconds) when the ratelimit will be lifted.
+    If fewer than `limit` timestamps, return 0.
     """
-    recent = sorted(_recent_timestamps(timestamps, window_seconds))
-    if len(recent) < max_requests:
+    if len(timestamps) < limit:
         return 0
-    oldest = recent[-max_requests]
-    return oldest + window_seconds
+    oldest = sorted(timestamps)[-limit]
+    return oldest + window
 
 Ratelimiter = ratelimiter
-
