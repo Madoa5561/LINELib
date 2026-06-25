@@ -691,3 +691,13 @@ python -m unittest discover -s tests
 ---
 
 > 本ライブラリはLINE社とは無関係の非公式プロジェクトです。
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=Madoa5561%2FLINELib&type=date&legend=bottom-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Madoa5561/LINELib&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Madoa5561/LINELib&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Madoa5561/LINELib&type=date&legend=top-left" />
+ </picture>
+</a>
