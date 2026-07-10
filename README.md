@@ -397,12 +397,6 @@ asyncio.run(main())
 python -m unittest discover -s tests
 ```
 
-## 注意
-
-- このライブラリは LINE の Web UI 由来の非公開 API を使っています
-- 仕様変更に弱いので、HAR 取得と再確認が重要です
-- Cookie は漏えいしないように扱ってください
-
 ## Example まとめ
 
 `example/` には、README と同じ内容の実行例を置いてあります。
