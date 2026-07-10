@@ -7,6 +7,7 @@ import random
 import json
 from typing import Optional, Dict, Any, Callable, Generator
 from .exceptions import LINEOAError
+from .sse import SSEParser
 from .util import merge_dicts
 import requests as _requests
 from .logger import lineoa_logger
@@ -15,10 +16,60 @@ class ChatService:
     def __init__(self):
         self.v1_BASE_URL = "https://chat.line.biz/api/v1"
         self.v2_BASE_URL = "https://chat.line.biz/api/v2"
+        self.v3_BASE_URL = "https://chat.line.biz/api/v3"
+        self.v4_BASE_URL = "https://chat.line.biz/api/v4"
+        self.manager_BASE_URL = "https://manager.line.biz/api"
         self.chat_client_version = "20240513144702"
         self.headers = {
             "Content-Type": "application/json"
         }
+
+    def _base_headers(self) -> Dict[str, str]:
+        return {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
+            "Accept": "application/json, text/plain, */*",
+            "x-oa-chat-client-version": self.chat_client_version,
+        }
+
+    def _session_headers(self, session: Optional[requests.Session], xsrf_token: Optional[str] = None, origin: Optional[str] = None, referer: Optional[str] = None) -> Dict[str, str]:
+        headers = self._base_headers()
+        if origin:
+            headers["Origin"] = origin
+        if referer:
+            headers["Referer"] = referer
+        if xsrf_token:
+            headers["x-xsrf-token"] = xsrf_token
+        if isinstance(session, _requests.Session):
+            cookie_dict = {}
+            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
+                try:
+                    cookie_dict.update(session.cookies.get_dict(domain=dom))
+                except Exception:
+                    pass
+            if cookie_dict:
+                headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
+        return headers
+
+    def _get_json(self, url: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None, params: Optional[Dict[str, Any]] = None, origin: Optional[str] = None, referer: Optional[str] = None) -> Dict[str, Any]:
+        req = session if session else requests
+        resp = req.get(url, headers=self._session_headers(session, xsrf_token=xsrf_token, origin=origin, referer=referer), params=params)
+        if not resp.ok:
+            raise LINEOAError(f"GET {url} failed: {resp.status_code} {resp.text}")
+        return resp.json()
+
+    def _put_json(self, url: str, payload: Optional[Dict[str, Any]] = None, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None, origin: Optional[str] = None, referer: Optional[str] = None) -> Dict[str, Any]:
+        req = session if session else requests
+        resp = req.put(url, headers=self._session_headers(session, xsrf_token=xsrf_token, origin=origin, referer=referer), json=payload)
+        if not resp.ok:
+            raise LINEOAError(f"PUT {url} failed: {resp.status_code} {resp.text}")
+        return resp.json() if resp.text else {}
+
+    def _post_json(self, url: str, payload: Optional[Dict[str, Any]] = None, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None, origin: Optional[str] = None, referer: Optional[str] = None) -> Dict[str, Any]:
+        req = session if session else requests
+        resp = req.post(url, headers=self._session_headers(session, xsrf_token=xsrf_token, origin=origin, referer=referer), json=payload)
+        if not resp.ok:
+            raise LINEOAError(f"POST {url} failed: {resp.status_code} {resp.text}")
+        return resp.json() if resp.text else {}
 
     def send_mention(self, bot_id: str, chat_id: str, mentionee_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -278,13 +329,14 @@ class ChatService:
         if resp.status_code != 200:
             lineoa_logger.error(f"[listen_messages] HTTP {resp.status_code}: {resp.text}")
             return
-        for event in client:
-            if event.event == "chat":
-                data = json.loads(event.data)
-                if on_message:
-                    on_message(data)
-                else:
-                    lineoa_logger.info(f"[SSE chat event] {data}")
+        for event in SSEParser.iter_events(resp.iter_lines(decode_unicode=True)):
+            if event.event not in (None, "chat"):
+                continue
+            data = event.payload
+            if on_message:
+                on_message(data)
+            else:
+                lineoa_logger.info(f"[SSE chat event] {data}")
 
     def get_chat_messages(self, bot_id: str, chat_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None, limit: int = 50, before: Optional[str] = None, after: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -339,7 +391,7 @@ class ChatService:
         elif xsrf_cookie:
             headers["X-XSRF-TOKEN"] = xsrf_cookie
         else:
-            csrf_resp = requests.get("https://chat.line.biz/api/v1/csrfToken", headers=headers)
+            csrf_resp = req.get("https://chat.line.biz/api/v1/csrfToken", headers=headers)
             if csrf_resp.ok:
                 csrf_json = csrf_resp.json()
                 token = csrf_json.get("token")
@@ -470,13 +522,7 @@ class ChatService:
         Returns:
             dict: Account info
         """
-        url = "https://chat.line.biz/api/v1/me"
-        try:
-            response = requests.get(url, headers=self.headers)
-            return response.json()
-        except Exception as e:
-            print(f"get_me: {e}")
-            raise LINEOAError(f"get_me: {e}")
+        return self._get_json("https://chat.line.biz/api/v1/me")
 
     def get_bot_account(self, bot_id: str, no_filter: bool = True) -> Dict[str, Any]:
         """
@@ -487,15 +533,9 @@ class ChatService:
         Returns:
             dict: Bot info
         """
-        url = f"https://chat.line.biz/api/v1/bots/{bot_id}"
+        url = f"{self.v1_BASE_URL}/bots/{bot_id}"
         params = {"noFilter": str(no_filter).lower()}
-        try:
-            response = requests.get(url, headers=self.headers, params=params)
-            self._handle_response(response)
-            return response.json()
-        except Exception as e:
-            print(f"get_bot_account: {e}")
-            raise LINEOAError(f"get_bot_account: {e}")
+        return self._get_json(url, params=params)
 
     def get_csrf_token(self) -> Dict[str, Any]:
         """
@@ -503,13 +543,13 @@ class ChatService:
         Returns:
             dict: CSRF token info
         """
-        url = "https://chat.line.biz/api/v1/csrfToken"
-        try:
-            response = requests.get(url, headers=self.headers)
-            self._handle_response(response)
-            return response.json()
-        except Exception as e:
-            raise LINEOAError(f"get_csrf_token: {e}")
+        return self._get_json("https://chat.line.biz/api/v1/csrfToken")
+
+    def get_whitelist_domains(self) -> Dict[str, Any]:
+        return self._get_json("https://chat.line.biz/api/v1/whitelistDomains")
+
+    def get_me_settings_pc(self) -> Dict[str, Any]:
+        return self._get_json("https://chat.line.biz/api/v1/me/settings/pc")
 
     def get_bot_accounts(self, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None, limit: int = 1000, no_filter: bool = True) -> Dict[str, Any]:
         """
@@ -547,12 +587,97 @@ class ChatService:
             dict: Pinned messages
         """
         url = f"{self.v2_BASE_URL}/bots/{bot_id}/chats/{chat_id}/messages/pin"
-        try:
-            response = requests.get(url, headers=self.headers)
-            self._handle_response(response)
-            return response.json()
-        except Exception as e:
-            raise LINEOAError(f"get_pinned_messages: {e}")
+        return self._get_json(url)
+
+    def get_chat(self, bot_id: str, chat_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}", session=session, xsrf_token=xsrf_token, referer=f"https://chat.line.biz/{bot_id}/chat/{chat_id}", origin="https://chat.line.biz")
+
+    def get_chat_mode(self, bot_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        return self._get_json(f"{self.v4_BASE_URL}/bots/{bot_id}/settings/chatMode", session=session, xsrf_token=xsrf_token)
+
+    def get_chat_mode_schedules(self, bot_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/settings/chatModeSchedules", session=session, xsrf_token=xsrf_token)
+
+    def get_available_features(self, bot_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        return self._get_json(f"{self.v2_BASE_URL}/bots/{bot_id}/availableFeatures", session=session, xsrf_token=xsrf_token)
+
+    def get_banner_web(self, bot_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        return self._get_json(f"{self.v2_BASE_URL}/bots/{bot_id}/banner/web", session=session, xsrf_token=xsrf_token)
+
+    def get_call_session(self, bot_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/callSession", session=session, xsrf_token=xsrf_token)
+
+    def get_activities(self, bot_id: str, chat_id: str, limit: int = 1, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/activities", session=session, xsrf_token=xsrf_token, params={"limit": limit})
+
+    def get_notes(self, bot_id: str, chat_id: str, limit: int = 20, with_total: bool = True, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/notes", session=session, xsrf_token=xsrf_token, params={"limit": limit, "withTotal": str(with_total).lower()})
+
+    def get_authorized_users(self, bot_id: str, biz_ids: str = "__AUTO_RESPONSE", session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/authorizedUsers", session=session, xsrf_token=xsrf_token, params={"bizIds": biz_ids})
+
+    def get_use_manual_chat(self, bot_id: str, chat_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        return self._get_json(f"{self.v2_BASE_URL}/bots/{bot_id}/chats/{chat_id}/useManualChat", session=session, xsrf_token=xsrf_token)
+
+    def get_recent_stickers(self, bot_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/stickers/recently", session=session, xsrf_token=xsrf_token)
+
+    def get_recent_emojis(self, bot_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/emojis/recently", session=session, xsrf_token=xsrf_token)
+
+    def get_saved_replies(self, bot_id: str, query: str = "", exclude_username_placeholder: bool = False, sort_key: str = "CREATED_AT", page_size: int = 25, page: int = 1, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        return self._get_json(f"{self.v2_BASE_URL}/bots/{bot_id}/savedReplies", session=session, xsrf_token=xsrf_token, params={"query": query, "excludeUsernamePlaceholder": str(exclude_username_placeholder).lower(), "sortKey": sort_key, "pageSize": page_size, "page": page})
+
+    def get_clock_now(self, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        return self._get_json(f"{self.v1_BASE_URL}/clock/now", session=session, xsrf_token=xsrf_token)
+
+    def get_holiday(self, country: str = "JP", session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        return self._get_json(f"{self.v1_BASE_URL}/holiday/{country}", session=session, xsrf_token=xsrf_token)
+
+    def get_plugins(self, bot_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/plugins", session=session, xsrf_token=xsrf_token)
+
+    def get_content_preview(self, bot_id: str, content_hash: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> bytes:
+        url = f"https://chat-content.line.biz/bot/{bot_id}/{content_hash}/preview"
+        req = session if session else requests
+        resp = req.get(
+            url,
+            headers={
+                "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+                "User-Agent": "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36",
+            },
+        )
+        if not resp.ok:
+            raise LINEOAError(f"get_content_preview failed: {resp.status_code} {resp.text}")
+        return resp.content
+
+    def get_sticker_image(self, sticker_id: str, session: Optional[requests.Session] = None) -> bytes:
+        url = f"https://stickershop.line-scdn.net/stickershop/v1/sticker/{sticker_id}/android/sticker.png"
+        req = session if session else requests
+        resp = req.get(
+            url,
+            headers={
+                "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+                "User-Agent": "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36",
+            },
+        )
+        if not resp.ok:
+            raise LINEOAError(f"get_sticker_image failed: {resp.status_code} {resp.text}")
+        return resp.content
+
+    def save_sticker_image(self, sticker_id: str, file_path: str, session: Optional[requests.Session] = None) -> str:
+        data = self.get_sticker_image(sticker_id=sticker_id, session=session)
+        with open(file_path, "wb") as f:
+            f.write(data)
+        return file_path
+
+    def save_content_preview(self, bot_id: str, content_hash: str, file_path: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> str:
+        data = self.get_content_preview(bot_id=bot_id, content_hash=content_hash, session=session, xsrf_token=xsrf_token)
+        with open(file_path, "wb") as f:
+            f.write(data)
+        return file_path
 
     def set_typing(self, bot_id: str, chat_id: str) -> Dict[str, Any]:
         """
@@ -611,13 +736,18 @@ class ChatService:
             headers["x-xsrf-token"] = xsrf_token
         req = session if session else requests
         try:
-            response = req.post(url, headers=headers, data=None)
+            response = req.post(url, headers=headers, data="")
             self._handle_response(response)
-            return response.json()
+            payload = response.json()
+            if "streamingApiBaseUrl" not in payload:
+                payload["streamingApiBaseUrl"] = "https://chat-streaming-api.line.biz"
+            if "streamingApiVersion" not in payload:
+                payload["streamingApiVersion"] = "v2"
+            return payload
         except Exception as e:
             raise LINEOAError(f"get_streaming_api_token: {e}")
 
-    def stream_events(self, streaming_api_token: str, device_type: str = "", client_type: str = "PC", ping_secs: int = 60, last_event_id: Optional[str] = None, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Generator[Dict[str, Any], None, None]:
+    def stream_events(self, streaming_api_token: str, device_type: str = "", client_type: str = "PC", ping_secs: int = 60, last_event_id: Optional[str] = None, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None, max_stream_seconds: float = 82800, base_url: str = "https://chat-streaming-api.line.biz", version: str = "v2") -> Generator[Dict[str, Any], None, None]:
         """
         Stream events from SSE endpoint.
         Args:
@@ -631,7 +761,7 @@ class ChatService:
         Yields:
             dict: Event data
         """
-        base_url = "https://chat-streaming-api.line.biz/api/v2/sse"
+        base_url = f"{base_url}/api/{version}/sse"
         params = {
             "token": streaming_api_token,
             "deviceType": device_type,
@@ -671,6 +801,7 @@ class ChatService:
             req = session
         else:
             req = requests
+        started_at = time.monotonic()
         with req.get(base_url, headers=headers, params=params, stream=True, timeout=90) as resp:
             if not resp.ok:
                 raise LINEOAError(f"HTTP {resp.status_code}: {resp.text}")
@@ -678,6 +809,8 @@ class ChatService:
             event_type = None
             data_lines = []
             for line in resp.iter_lines(decode_unicode=True):
+                if time.monotonic() - started_at >= max_stream_seconds:
+                    break
                 if line is None:
                     continue
                 line = line.strip()
@@ -705,6 +838,8 @@ class ChatService:
                     event_type = line[6:].strip()
                 elif line.startswith("data:"):
                     data_lines.append(line[5:].strip())
+                else:
+                    continue
 
     def send_message(self, bot_id: str, chat_id: str, message: Dict[str, Any], session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """

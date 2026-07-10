@@ -21,6 +21,7 @@ class ListenConfig:
     client_type: str = "PC"
     reconnect_interval: float = 5
     max_reconnects: Optional[int] = None
+    max_stream_seconds: float = 82800
 
     def __post_init__(self):
         if int(self.ping_secs) < 1:
@@ -29,3 +30,5 @@ class ListenConfig:
             raise ValueError("reconnect_interval must be greater than or equal to 0")
         if self.max_reconnects is not None and int(self.max_reconnects) < 0:
             raise ValueError("max_reconnects must be greater than or equal to 0")
+        if float(self.max_stream_seconds) <= 0:
+            raise ValueError("max_stream_seconds must be greater than 0")

@@ -1,7 +1,9 @@
 import threading
+
 from LINELib.LINELib import LINELib
 from LINELib.config import ListenConfig
 from LINELib.logger import lineoa_logger
+
 
 class LineBot:
     def __init__(
@@ -17,6 +19,7 @@ class LineBot:
         rate_limit_enabled=True,
         reconnect_interval=5,
         max_reconnects=None,
+        max_stream_seconds=82800,
     ):
         self.cookie_path = cookie_path
         self.listen_config = ListenConfig(
@@ -25,6 +28,7 @@ class LineBot:
             client_type=client_type,
             reconnect_interval=reconnect_interval,
             max_reconnects=max_reconnects,
+            max_stream_seconds=max_stream_seconds,
         )
         self.ping_secs = self.listen_config.ping_secs
         self.device_type = self.listen_config.device_type
@@ -48,19 +52,19 @@ class LineBot:
         self._xsrf_token = self._lib._xsrf_token
         self._bot_ids = None
         try:
-            if hasattr(self._lib, 'bots') and hasattr(self._lib.bots, 'ids'):
+            if hasattr(self._lib, "bots") and hasattr(self._lib.bots, "ids"):
                 self._bot_ids = list(self._lib.bots.ids.values())
         except Exception as e:
             lineoa_logger.error(f"Failed to preload bot ids: {e}")
         lineoa_logger.login("Login success (cookie loaded)")
 
     def sendMessage(self, bot_id=None, chat_id=None, text=None, quoteToken=None):
-        """テキストメッセージ送信"""
-        return self._lib.sendMessage(str(chat_id), str(text), bot_id=bot_id, quoteToken=quoteToken)
+        """Send a text message to the given chat."""
+        return self._lib.sendMessage(user_id=str(chat_id), text=str(text), bot_id=bot_id, quoteToken=quoteToken)
 
     def sendFile(self, bot_id=None, chat_id=None, file_path=None):
-        """ファイル送信"""
-        return self._lib.sendFile(str(chat_id), str(file_path), bot_id=bot_id)
+        """Send a file to the given chat."""
+        return self._lib.sendFile(chat_id=str(chat_id), file_path=str(file_path), bot_id=bot_id)
 
     def getRateLimitStatus(self):
         """Return local send rate-limit status."""
@@ -71,19 +75,19 @@ class LineBot:
         return self._lib.reset_rate_limit()
 
     def getChatMessages(self, bot_id=None, chat_id=None, limit=50, before=None, after=None):
-        """チャット履歴取得"""
+        """Get messages for a chat."""
         return self._lib.getMessages(bot_id=str(bot_id), chat_id=str(chat_id), limit=limit, before=before, after=after)
 
     def getMembers(self, bot_id=None, chat_id=None, limit=100):
-        """チャットメンバー取得"""
+        """Get members for a chat."""
         return self._lib.getMembers(bot_id=str(bot_id), chat_id=str(chat_id), limit=limit)
 
     def getBots(self):
-        """botアカウントの一覧取得"""
+        """Get available bot accounts."""
         return self._lib.get_bots()
 
     def getChats(self, bot_id=None, limit=100):
-        """チャット一覧取得"""
+        """Get chats for a bot."""
         return self._lib.getChats(bot_id=str(bot_id), limit=limit)
 
     def event(self, func):
@@ -91,25 +95,47 @@ class LineBot:
         return func
 
     def dispatch(self, event_type, event):
-        payload = event.get('payload')
+        payload = event.get("payload")
         if not isinstance(payload, dict):
             payload = {}
             event = dict(event)
-            event['payload'] = payload
-        subevent = payload.get('subEvent')
+            event["payload"] = payload
+        subevent = payload.get("subEvent")
         payload_type = None
-        if isinstance(payload.get('payload'), dict):
-            payload_type = payload['payload'].get('type')
+        if isinstance(payload.get("payload"), dict):
+            payload_type = payload["payload"].get("type")
+        if payload_type in {"image", "video", "file"} and "normalized" not in event:
+            inner = payload.get("payload", {})
+            message = inner.get("message", {}) if isinstance(inner, dict) else {}
+            event["normalized"] = {
+                "kind": "media",
+                "message_type": payload_type,
+                "bot_id": payload.get("botId"),
+                "chat_id": payload.get("chatId"),
+                "message_id": message.get("id"),
+                "content_hash": message.get("contentHash") or (message.get("contentProvider") or {}).get("contentHash"),
+                "media_url": None,
+                "raw": message,
+            }
+            if event["normalized"]["bot_id"] and event["normalized"]["content_hash"]:
+                event["normalized"]["media_url"] = f"https://chat-content.line.biz/bot/{event['normalized']['bot_id']}/{event['normalized']['content_hash']}/preview"
 
         handler = None
-        if subevent:
-            handler = self.handlers.get(f'on_{subevent}')
+        if event_type:
+            handler = self.handlers.get(f"on_{event_type}")
+        if not handler and subevent:
+            handler = self.handlers.get(f"on_{subevent}")
         if not handler and payload_type:
-            handler = self.handlers.get(f'on_{payload_type}')
-        if not handler and subevent == 'message' and payload_type == 'message':
-            handler = self.handlers.get('on_message')
+            if payload_type in {"image", "video", "file"}:
+                handler = self.handlers.get("on_media")
+            if not handler:
+                handler = self.handlers.get(f"on_{payload_type}")
+        if not handler and payload_type in {"image", "video", "file"}:
+            handler = self.handlers.get("on_media")
+        if not handler and subevent == "message" and payload_type == "message":
+            handler = self.handlers.get("on_message")
         if not handler:
-            handler = self.handlers.get('on_unknown')
+            handler = self.handlers.get("on_unknown")
         if handler:
             try:
                 handler(event)
@@ -129,9 +155,11 @@ class LineBot:
 
     def _polling_loop(self, bot_id):
         lineoa_logger.info(f"Polling start (botid={bot_id})")
+
         def _on_event(event):
-            event_type = event.get('type')
+            event_type = event.get("type")
             self.dispatch(event_type, event)
+
         reconnects = 0
         try:
             while not self._stop_event.is_set():
@@ -144,6 +172,7 @@ class LineBot:
                         last_event_id=self._last_event_id,
                         on_event=_on_event,
                         stop_event=self._stop_event.is_set,
+                        max_stream_seconds=self.listen_config.max_stream_seconds,
                     )
                     if self._stop_event.is_set():
                         break
@@ -172,7 +201,7 @@ class LineBot:
                 self._listen_thread.join(1)
         except KeyboardInterrupt:
             self.stop()
-            print('Bot stopped.')
+            print("Bot stopped.")
 
     def stop(self):
         self.running = False

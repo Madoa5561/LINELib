@@ -3,6 +3,7 @@ from .AuthService import AuthService
 from .ChatService import ChatService
 from .util import ratelimiter, ratelimit_after
 from .exceptions import LINEOAError
+from .sse import SSEEvent
 import os
 import requests
 import json
@@ -24,13 +25,16 @@ class LINELib:
         try:
             self._restore_session_from_cookie()
         except LINEOAError as e:
-            login_result = self._auth.login_with_email_and_2fa(email, password, get_2fa_code_callback=None)
-            self._session = login_result.get("session")
-            self._user_info = login_result.get("user_info")
-            for c in self._session.cookies:
-                if c.name == "XSRF-TOKEN" and "chat.line.biz" in c.domain:
-                    self._xsrf_token = c.value
-                    break
+            if email and password:
+                login_result = self._auth.login_with_email_and_2fa(email, password, get_2fa_code_callback=None)
+                self._session = login_result.get("session")
+                self._user_info = login_result.get("user_info")
+                for c in self._session.cookies:
+                    if c.name == "XSRF-TOKEN" and "chat.line.biz" in c.domain:
+                        self._xsrf_token = c.value
+                        break
+            else:
+                self._session = requests.Session()
         if self._session is None:
             self._session = requests.Session()
         self._chat_service = ChatService()
@@ -112,7 +116,7 @@ class LINELib:
         data["SendTimestamps"] = []
         self._save_storage(data)
 
-    def get_streaming_api_token_and_listen_stream_events(self, bot_id: str, device_type: str = "", client_type: str = "PC", ping_secs: int = 60, last_event_id: Optional[str] = None, on_event: Optional[Callable[[Dict[str, Any]], None]] = None, stop_event: Optional[Callable[[], bool]] = None) -> Optional[str]:
+    def get_streaming_api_token_and_listen_stream_events(self, bot_id: str, device_type: str = "", client_type: str = "PC", ping_secs: int = 60, last_event_id: Optional[str] = None, on_event: Optional[Callable[[Dict[str, Any]], None]] = None, stop_event: Optional[Callable[[], bool]] = None, max_stream_seconds: float = 82800) -> Optional[str]:
         """
         streamingApiToken取得→SSE接続を一連で行う
         :param bot_id: BotのID
@@ -129,6 +133,19 @@ class LINELib:
             streaming_api_token = token_info.get("streamingApiToken")
             if not isinstance(streaming_api_token, str) or not streaming_api_token:
                 raise LINEOAError("streamingApiToken is missing or invalid")
+            streaming_api_base_url = token_info.get("streamingApiBaseUrl", "https://chat-streaming-api.line.biz")
+            streaming_api_version = token_info.get("streamingApiVersion", "v2")
+            token_expired_at = token_info.get("expiredAt")
+            if isinstance(token_expired_at, (int, float)):
+                seconds_until_expiry = max(0.0, (float(token_expired_at) - time.time() * 1000.0) / 1000.0)
+                if seconds_until_expiry > 0:
+                    max_stream_seconds = min(max_stream_seconds, max(1.0, seconds_until_expiry - 60.0))
+            connection_id = token_info.get("connectionId")
+            if isinstance(connection_id, str) and connection_id:
+                self._chat_service.streaming_state(
+                    bot_id=bot_id,
+                    state={"connectionId": connection_id, "idle": True},
+                )
             last_event_id = last_event_id or token_info.get("lastEventId")
             for event in self._chat_service.stream_events(
                 streaming_api_token,
@@ -137,7 +154,10 @@ class LINELib:
                 ping_secs=ping_secs,
                 last_event_id=last_event_id,
                 session=self._session,
-                xsrf_token=self._xsrf_token
+                xsrf_token=self._xsrf_token,
+                max_stream_seconds=max_stream_seconds,
+                base_url=streaming_api_base_url,
+                version=streaming_api_version,
             ):
                 if stop_event and stop_event():
                     break
@@ -154,6 +174,144 @@ class LINELib:
         """チャットメンバー一覧取得"""
         return self._chat_service.get_chat_members(
             bot_id=str(bot_id), chat_id=str(chat_id), limit=limit, session=self._session, xsrf_token=self._xsrf_token
+        )
+
+    def get_me(self) -> Dict[str, Any]:
+        return self._chat_service.get_me()
+
+    def get_bot_account(self, bot_id: str, no_filter: bool = True) -> Dict[str, Any]:
+        return self._chat_service.get_bot_account(bot_id=bot_id, no_filter=no_filter)
+
+    def get_csrf_token(self) -> Dict[str, Any]:
+        return self._chat_service.get_csrf_token()
+
+    def get_pinned_messages(self, bot_id: str, chat_id: str) -> Dict[str, Any]:
+        return self._chat_service.get_pinned_messages(bot_id=bot_id, chat_id=chat_id)
+
+    def set_typing(self, bot_id: str, chat_id: str) -> Dict[str, Any]:
+        return self._chat_service.set_typing(bot_id=bot_id, chat_id=chat_id)
+
+    def streaming_state(self, bot_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
+        return self._chat_service.streaming_state(bot_id=bot_id, state=state)
+
+    def get_whitelist_domains(self) -> Dict[str, Any]:
+        return self._chat_service.get_whitelist_domains()
+
+    def get_me_settings_pc(self) -> Dict[str, Any]:
+        return self._chat_service.get_me_settings_pc()
+
+    def get_chat_mode(self, bot_id: str) -> Dict[str, Any]:
+        return self._chat_service.get_chat_mode(bot_id=bot_id, session=self._session, xsrf_token=self._xsrf_token)
+
+    def get_chat_mode_schedules(self, bot_id: str) -> Dict[str, Any]:
+        return self._chat_service.get_chat_mode_schedules(bot_id=bot_id, session=self._session, xsrf_token=self._xsrf_token)
+
+    def get_available_features(self, bot_id: str) -> Dict[str, Any]:
+        return self._chat_service.get_available_features(bot_id=bot_id, session=self._session, xsrf_token=self._xsrf_token)
+
+    def get_banner_web(self, bot_id: str) -> Dict[str, Any]:
+        return self._chat_service.get_banner_web(bot_id=bot_id, session=self._session, xsrf_token=self._xsrf_token)
+
+    def get_call_session(self, bot_id: str) -> Dict[str, Any]:
+        return self._chat_service.get_call_session(bot_id=bot_id, session=self._session, xsrf_token=self._xsrf_token)
+
+    def get_activities(self, bot_id: str, chat_id: str, limit: int = 1) -> Dict[str, Any]:
+        return self._chat_service.get_activities(bot_id=bot_id, chat_id=chat_id, limit=limit, session=self._session, xsrf_token=self._xsrf_token)
+
+    def get_notes(self, bot_id: str, chat_id: str, limit: int = 20, with_total: bool = True) -> Dict[str, Any]:
+        return self._chat_service.get_notes(bot_id=bot_id, chat_id=chat_id, limit=limit, with_total=with_total, session=self._session, xsrf_token=self._xsrf_token)
+
+    def get_authorized_users(self, bot_id: str, biz_ids: str = "__AUTO_RESPONSE") -> Dict[str, Any]:
+        return self._chat_service.get_authorized_users(bot_id=bot_id, biz_ids=biz_ids, session=self._session, xsrf_token=self._xsrf_token)
+
+    def get_use_manual_chat(self, bot_id: str, chat_id: str) -> Dict[str, Any]:
+        return self._chat_service.get_use_manual_chat(bot_id=bot_id, chat_id=chat_id, session=self._session, xsrf_token=self._xsrf_token)
+
+    def get_recent_stickers(self, bot_id: str) -> Dict[str, Any]:
+        return self._chat_service.get_recent_stickers(bot_id=bot_id, session=self._session, xsrf_token=self._xsrf_token)
+
+    def get_recent_emojis(self, bot_id: str) -> Dict[str, Any]:
+        return self._chat_service.get_recent_emojis(bot_id=bot_id, session=self._session, xsrf_token=self._xsrf_token)
+
+    def get_saved_replies(self, bot_id: str, query: str = "", exclude_username_placeholder: bool = False, sort_key: str = "CREATED_AT", page_size: int = 25, page: int = 1) -> Dict[str, Any]:
+        return self._chat_service.get_saved_replies(bot_id=bot_id, query=query, exclude_username_placeholder=exclude_username_placeholder, sort_key=sort_key, page_size=page_size, page=page, session=self._session, xsrf_token=self._xsrf_token)
+
+    def get_clock_now(self) -> Dict[str, Any]:
+        return self._chat_service.get_clock_now(session=self._session, xsrf_token=self._xsrf_token)
+
+    def get_holiday(self, country: str = "JP") -> Dict[str, Any]:
+        return self._chat_service.get_holiday(country=country, session=self._session, xsrf_token=self._xsrf_token)
+
+    def get_plugins(self, bot_id: str) -> Dict[str, Any]:
+        return self._chat_service.get_plugins(bot_id=bot_id, session=self._session, xsrf_token=self._xsrf_token)
+
+    def get_image_preview(self, bot_id: str, content_hash: str) -> bytes:
+        return self._chat_service.get_content_preview(bot_id=bot_id, content_hash=content_hash, session=self._session, xsrf_token=self._xsrf_token)
+
+    def save_image_preview(self, bot_id: str, content_hash: str, file_path: str) -> str:
+        data = self.get_image_preview(bot_id=bot_id, content_hash=content_hash)
+        with open(file_path, "wb") as f:
+            f.write(data)
+        return file_path
+
+    def normalize_message_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        sse_event = SSEEvent(id=event.get("id"), event=event.get("type"), data=json.dumps(event.get("payload", {}), ensure_ascii=False))
+        normalized = sse_event.normalized_message()
+        if normalized is None:
+            return {
+                "kind": "unknown",
+                "raw_event": event,
+            }
+        return normalized
+
+    def save_message_media(self, event: Dict[str, Any], file_path: str) -> str:
+        normalized = self.normalize_message_event(event)
+        message_type = normalized.get("message_type")
+        bot_id = normalized.get("bot_id")
+        target_path = file_path
+        if not os.path.splitext(target_path)[1]:
+            extension = normalized.get("extension")
+            if message_type == "link":
+                extension = "json"
+            elif message_type == "sticker":
+                extension = "png"
+            if extension:
+                target_path = f"{target_path}.{extension}"
+
+        if message_type == "link":
+            payload = {
+                "message_id": normalized.get("message_id"),
+                "bot_id": bot_id,
+                "chat_id": normalized.get("chat_id"),
+                "title": normalized.get("title"),
+                "url": normalized.get("url"),
+                "text": normalized.get("text"),
+                "timestamp": normalized.get("timestamp"),
+                "raw": normalized.get("raw"),
+            }
+            with open(target_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            return target_path
+
+        if message_type == "sticker":
+            sticker_id = normalized.get("sticker_id")
+            if not sticker_id:
+                raise LINEOAError("message does not contain sticker_id")
+            return self._chat_service.save_sticker_image(
+                sticker_id=str(sticker_id),
+                file_path=target_path,
+                session=self._session,
+            )
+
+        content_hash = normalized.get("content_hash")
+        if not bot_id or not content_hash:
+            raise LINEOAError("message does not contain downloadable media")
+        return self._chat_service.save_content_preview(
+            bot_id=bot_id,
+            content_hash=content_hash,
+            file_path=target_path,
+            session=self._session,
+            xsrf_token=self._xsrf_token,
         )
 
     def send_file(self, chat_id: str, file_path: str, bot_id: Optional[str] = None) -> Dict[str, Any]:
@@ -175,7 +333,7 @@ class LINELib:
             bot_id, chat_id, file_path, session=self._session, xsrf_token=self._xsrf_token
         )
     
-    def listen_stream_events(self, streaming_api_token: str, device_type: str = "", client_type: str = "PC", ping_secs: int = 60, last_event_id: Optional[str] = None, on_event: Optional[Callable[[Dict[str, Any]], None]] = None) -> None:
+    def listen_stream_events(self, streaming_api_token: str, device_type: str = "", client_type: str = "PC", ping_secs: int = 60, last_event_id: Optional[str] = None, on_event: Optional[Callable[[Dict[str, Any]], None]] = None, max_stream_seconds: float = 82800, base_url: str = "https://chat-streaming-api.line.biz", version: str = "v2") -> None:
         """
         chat-streaming-api.line.biz SSEイベント受信
         :param streaming_api_token: SSE用トークン
@@ -192,7 +350,10 @@ class LINELib:
             ping_secs=ping_secs,
             last_event_id=last_event_id,
             session=self._session,
-            xsrf_token=self._xsrf_token
+            xsrf_token=self._xsrf_token,
+            max_stream_seconds=max_stream_seconds,
+            base_url=base_url,
+            version=version,
         ):
             if on_event:
                 on_event(event)
