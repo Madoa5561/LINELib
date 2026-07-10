@@ -29,6 +29,7 @@ class LINELib:
                 login_result = self._auth.login_with_email_and_2fa(email, password, get_2fa_code_callback=None)
                 self._session = login_result.get("session")
                 self._user_info = login_result.get("user_info")
+                self._bot_ids = login_result.get("bot_ids", [])
                 for c in self._session.cookies:
                     if c.name == "XSRF-TOKEN" and "chat.line.biz" in c.domain:
                         self._xsrf_token = c.value
@@ -39,6 +40,7 @@ class LINELib:
             self._session = requests.Session()
         self._chat_service = ChatService()
         self._bots = None
+        self._bot_ids = getattr(self, "_bot_ids", [])
         self._chats = None
         self._provider = None
 
