@@ -27,7 +27,7 @@ def _auth_options(require_credentials: bool) -> dict[str, Any]:
         "password": password,
         "get_2fa_code_callback": _otp_code,
         "interactive_login": True,
-        "browser_channel": os.environ.get("LINEOA_BROWSER_CHANNEL", "msedge"),
+        "browser_channel": os.environ.get("LINEOA_BROWSER_CHANNEL", "chrome"),
         "interactive_timeout": float(os.environ.get("LINEOA_INTERACTIVE_TIMEOUT", "300")),
     }
 

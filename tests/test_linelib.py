@@ -26,6 +26,15 @@ def make_library(storage_path):
 
 
 class LINELibTests(unittest.TestCase):
+    def test_cookie_restore_uses_selected_edge_headers(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            storage_path = Path(temp_dir) / "storage.json"
+            storage_path.write_text('{"cookies": []}', encoding="utf-8")
+            library = LINELib(storage=str(storage_path), browser_channel="msedge")
+
+        self.assertIn("Edg/151.0.0.0", library._session.headers["User-Agent"])
+        self.assertIn("Microsoft Edge", library._session.headers["sec-ch-ua"])
+
     def test_rate_limit_cleanup_uses_configured_window(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             library = make_library(Path(temp_dir) / "storage.json")

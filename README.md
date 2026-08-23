@@ -47,9 +47,9 @@ bot = LineBot(cookie_path="lineoa-storage.json")
 
 `lineoa-storage.json`にはログインCookieが平文で保存されます。Gitへcommitしたり、第三者と共有したりしないでください。保存済みCookieが有効なら、メールアドレスやパスワードを送信せずに再利用します。
 
-### Windows / Microsoft Edgeで初回ログイン
+### Windows 11 / Google Chromeで初回ログイン
 
-reCAPTCHAを含む初回ログインには、Windowsへインストール済みのMicrosoft Edgeを使う対話ログインを推奨します。任意依存を追加してください。Playwright自身のChromiumを別途ダウンロードする必要はありません。
+reCAPTCHAを含む初回ログインには、Windowsへインストール済みのGoogle Chromeを使う対話ログインを既定とします。任意依存を追加してください。Playwright自身のChromiumを別途ダウンロードする必要はありません。
 
 ```bash
 pip install "lineoa[interactive-login]"
@@ -67,23 +67,28 @@ try:
         password=os.environ["LINEOA_PASSWORD"],
         get_2fa_code_callback=lambda: input("メールに届いた6桁のログインコード: ").strip(),
         interactive_login=True,
-        browser_channel="msedge",
+        browser_channel="chrome",
     )
 except InteractiveLoginRequired as error:
     print(f"ブラウザでの追加認証が必要です: {error.reason}")
 ```
 
-`browser_channel`の既定値は`msedge`です。`interactive_login=True`では、保存Cookieの検証後、PythonからログインAPIへ認証情報を事前送信せず、最初から実際のMicrosoft Edgeで公式ログイン画面を開きます。Windows/EdgeのUser-AgentとplatformはEdge自身が送信し、LINELibによるUA偽装は行いません。
+`browser_channel`の既定値は`chrome`です。`interactive_login=True`では、保存Cookieの検証後、PythonからログインAPIへ認証情報を事前送信せず、最初から実際のGoogle Chromeで公式ログイン画面を開きます。Microsoft Edgeを使う場合は`browser_channel="msedge"`を指定してください。
+
+User-AgentとClient Hintsは、Windows 11上の可視Chrome/Edgeが公式ログインページへ実際に送信した値へ固定しています。Windows 11でもUA互換仕様によりOS部分は`Windows NT 10.0`になります。ブラウザ内のリクエストと、Cookieを引き継ぐOTP検証・リダイレクト用HTTP Sessionの両方で同じ値を使用します。
+
+- Chrome: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36`
+- Edge: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0`
 
 メール2段階認証が必要な場合は、`get_2fa_code_callback` が返した6桁コードを同じログインセッションで検証します。コードをソースやCookieファイルへ保存する必要はありません。
 
 reCAPTCHAはログインコードのように別途入力できる値ではなく、公式ページのブラウザセッション内で実行されます。隠しreCAPTCHAは公式ページ上で通常実行され、視覚的な確認が表示された場合だけ利用者が操作してください。LINELibはCAPTCHAの解読や回避を行いません。
 
-verification画面へ進むと対話ブラウザを閉じ、同じCookieとCSRFを引き継いだHTTPセッションでメールOTPを検証します。成功後のCookieは`cookie_path`へ保存されます。Edgeが利用できない環境では`browser_channel="chrome"`を明示してGoogle Chromeへ切り替えられます。
+verification画面へ進むと対話ブラウザを閉じ、同じCookieとCSRFを引き継いだHTTPセッションでメールOTPを検証します。成功後のCookieは`cookie_path`へ保存されます。ChromeとEdge以外のchannelは、誤ったUAを送信しないよう拒否します。
 
 ### ブラウザを使わない直接HTTPログイン
 
-`interactive_login=False`のまま`email` / `password`を渡すと、ブラウザやSeleniumを使わずLINEヤフーBusiness IDのログインAPIへ直接ログインします。reCAPTCHAが要求されなければそのまま完了し、要求された場合は`InteractiveLoginRequired(reason="recaptcha")`を送出します。認証情報はCookieファイルへ保存されません。
+`interactive_login=False`のまま`email` / `password`を渡すと、ブラウザやSeleniumを使わずLINEヤフーBusiness IDのログインAPIへ直接ログインします。この場合も`browser_channel`に対応する固定UAを送信します。reCAPTCHAが要求されなければそのまま完了し、要求された場合は`InteractiveLoginRequired(reason="recaptcha")`を送出します。認証情報はCookieファイルへ保存されません。
 
 ## 基本送信
 
@@ -451,7 +456,7 @@ python .\example\example_login_edge.py
 
 メールアドレスを入力後、パスワードは画面へ表示されない入力欄で受け取ります。`LINEOA_EMAIL`と`LINEOA_PASSWORD`が設定済みなら入力を省略できます。Microsoft Edgeが開き、必要ならターミナルでメールOTPの入力待ちになります。成功すると`LINEOA_COOKIE_PATH`または`lineoa-storage.json`へCookieを保存します。以後のexampleは同じCookieを再利用するため、Cookieが有効な間は認証情報を設定しなくても実行できます。
 
-`example_login_edge.py`はEdge初回ログインの引数をすべて明示した自己完結例です。その他の既存exampleは`example/_login.py`の共通認証処理を使います。Cookieが失効していて`LINEOA_EMAIL`と`LINEOA_PASSWORD`が設定されている場合は、自動的にEdgeログインへ移行します。
+`example_login_edge.py`はEdge初回ログインの引数をすべて明示した自己完結例です。その他の既存exampleは`example/_login.py`の共通認証処理を使います。Cookieが失効していて`LINEOA_EMAIL`と`LINEOA_PASSWORD`が設定されている場合は、既定でChromeログインへ移行します。`LINEOA_BROWSER_CHANNEL=msedge`を設定するとEdgeへ切り替えられます。
 
 `example_hybrid.py`のHTTPサーバーはローカル確認用として`127.0.0.1:6100`だけで待ち受けます。公開Webhookとして使う場合に必要な署名検証は実装していません。
 
@@ -459,7 +464,7 @@ python .\example\example_login_edge.py
 
 - `LINEOA_COOKIE_PATH`（任意、既定値: `lineoa-storage.json`）
 - `LINEOA_EMAIL` / `LINEOA_PASSWORD`（初回ログインまたはCookie失効時）
-- `LINEOA_BROWSER_CHANNEL`（任意、既定値: `msedge`）
+- `LINEOA_BROWSER_CHANNEL`（任意、既定値: `chrome`、Edgeは`msedge`）
 - `LINEOA_INTERACTIVE_TIMEOUT`（任意、既定値: `300`秒）
 - `LINEOA_BOT_ID`
 - `LINEOA_CHAT_ID`

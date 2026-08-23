@@ -12,7 +12,7 @@ import random
 
 class LINELib:
 
-    def __init__(self, storage: Optional[str] = None, email: Optional[str] = None, password: Optional[str] = None, rate_limit: int = 18, rate_limit_window: float = 60, rate_limit_enabled: bool = True, get_2fa_code_callback: Optional[Callable[[], str]] = None, interactive_login: bool = False, browser_channel: str = "msedge", interactive_timeout: float = 300):
+    def __init__(self, storage: Optional[str] = None, email: Optional[str] = None, password: Optional[str] = None, rate_limit: int = 18, rate_limit_window: float = 60, rate_limit_enabled: bool = True, get_2fa_code_callback: Optional[Callable[[], str]] = None, interactive_login: bool = False, browser_channel: str = "chrome", interactive_timeout: float = 300):
         self.storage = storage or "lineoa-storage.json"
         self._storage_cache = None
         self._rate_limit = rate_limit
@@ -36,11 +36,12 @@ class LINELib:
             self._bot_ids = login_result.get("bot_ids", [])
         else:
             try:
-                self._restore_session_from_cookie()
+                self._restore_session_from_cookie(browser_channel)
             except LINEOAError:
                 self._session = requests.Session()
         if self._session is None:
             self._session = requests.Session()
+        self._session.headers.update(self._auth._browser_headers_for_channel(browser_channel))
         if self._xsrf_token is None:
             for cookie in self._session.cookies:
                 if cookie.name == "XSRF-TOKEN" and "chat.line.biz" in cookie.domain:
@@ -556,7 +557,7 @@ class LINELib:
     def getMembers(self, bot_id: str, chat_id: str, limit: int = 100) -> Dict[str, Any]:
         return self.get_chat_members(bot_id=bot_id, chat_id=chat_id, limit=limit)
 
-    def _restore_session_from_cookie(self) -> None:
+    def _restore_session_from_cookie(self, browser_channel: str = "chrome") -> None:
         if not os.path.exists(self.storage):
             raise LINEOAError("cookie storage does not exist. Please save logged-in cookies.")
         if os.path.getsize(self.storage) == 0:
@@ -566,6 +567,7 @@ class LINELib:
         if "cookies" not in data:
             raise LINEOAError("cookie storage is invalid")
         session = requests.Session()
+        session.headers.update(self._auth._browser_headers_for_channel(browser_channel))
         for c in data["cookies"]:
             cookie_args = {"path": c.get("path") or "/"}
             if c.get("domain"):

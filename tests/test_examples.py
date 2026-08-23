@@ -26,7 +26,7 @@ class ExampleLoginTests(unittest.TestCase):
         self.assertNotIn("email", kwargs)
         self.assertNotIn("interactive_login", kwargs)
 
-    def test_credentials_enable_edge_interactive_login(self):
+    def test_credentials_enable_chrome_interactive_login_by_default(self):
         environment = {
             "LINEOA_EMAIL": "owner@example.com",
             "LINEOA_PASSWORD": "test-password",
@@ -41,13 +41,28 @@ class ExampleLoginTests(unittest.TestCase):
         self.assertEqual("owner@example.com", kwargs["email"])
         self.assertEqual("test-password", kwargs["password"])
         self.assertTrue(kwargs["interactive_login"])
-        self.assertEqual("msedge", kwargs["browser_channel"])
+        self.assertEqual("chrome", kwargs["browser_channel"])
         self.assertTrue(callable(kwargs["get_2fa_code_callback"]))
 
     def test_partial_credentials_are_rejected(self):
         with patch.dict(os.environ, {"LINEOA_EMAIL": "owner@example.com"}, clear=True):
             with self.assertRaisesRegex(RuntimeError, "must be set together"):
                 LOGIN_HELPER.create_library()
+
+    def test_edge_channel_can_be_selected(self):
+        environment = {
+            "LINEOA_EMAIL": "owner@example.com",
+            "LINEOA_PASSWORD": "test-password",
+            "LINEOA_BROWSER_CHANNEL": "msedge",
+        }
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch.object(LOGIN_HELPER, "LineBot") as line_bot,
+        ):
+            LOGIN_HELPER.create_bot()
+
+        _, kwargs = line_bot.call_args
+        self.assertEqual("msedge", kwargs["browser_channel"])
 
 
 if __name__ == "__main__":

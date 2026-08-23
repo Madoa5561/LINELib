@@ -22,7 +22,7 @@ class LineBot:
         max_stream_seconds=82800,
         get_2fa_code_callback=None,
         interactive_login=False,
-        browser_channel="msedge",
+        browser_channel="chrome",
         interactive_timeout=300,
     ):
         self.cookie_path = cookie_path

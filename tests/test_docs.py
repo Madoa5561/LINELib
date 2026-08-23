@@ -96,21 +96,26 @@ class DocumentationTests(unittest.TestCase):
             with self.subTest(environment=name):
                 self.assertIn(f"`{name}`", readme)
 
-    def test_interactive_browser_defaults_to_edge(self):
+    def test_interactive_browser_defaults_to_chrome(self):
         self.assertEqual(
-            "msedge",
+            "chrome",
             inspect.signature(LineBot).parameters["browser_channel"].default,
         )
         self.assertEqual(
-            "msedge",
+            "chrome",
             inspect.signature(LibraryClient).parameters["browser_channel"].default,
         )
         self.assertEqual(
-            "msedge",
+            "chrome",
             inspect.signature(AuthService.login_with_email_and_2fa)
             .parameters["browser_channel"]
             .default,
         )
+
+    def test_readme_user_agents_match_auth_service(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(AuthService.WINDOWS_CHROME_USER_AGENT, readme)
+        self.assertIn(AuthService.WINDOWS_EDGE_USER_AGENT, readme)
 
     def test_documented_linebot_methods_exist(self):
         methods = {

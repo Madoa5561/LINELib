@@ -20,7 +20,7 @@ __all__ = [
     "SSEParser",
 ]
 __author__ = "madoa5561"
-__version__ = "7.7.11"
+__version__ = "7.7.12"
 
 __license__ = "MIT"
 

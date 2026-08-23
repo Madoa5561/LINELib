@@ -40,6 +40,10 @@ class AuthService:
 	EMAIL_VERIFICATION_VERIFY_URL = "https://account.line.biz/api/verification/verify"
 	EMAIL_VERIFICATION_RESEND_URL = "https://account.line.biz/api/verification/resend"
 	ALLOWED_LOGIN_HOSTS = {"account.line.biz", "manager.line.biz", "chat.line.biz"}
+	WINDOWS_CHROME_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+	WINDOWS_EDGE_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0"
+	WINDOWS_CHROME_SEC_CH_UA = '"Not=A?Brand";v="99", "Google Chrome";v="151", "Chromium";v="151"'
+	WINDOWS_EDGE_SEC_CH_UA = '"Not=A?Brand";v="99", "Microsoft Edge";v="151", "Chromium";v="151"'
 
 	def __init__(self, channel_id: Optional[str] = None, channel_secret: Optional[str] = None, access_token: Optional[str] = None, cookie_store_path: Optional[str] = None, request_timeout: float = 30):
 		self.channel_id = channel_id
@@ -47,6 +51,25 @@ class AuthService:
 		self.access_token = access_token
 		self.cookie_store_path = cookie_store_path
 		self.request_timeout = request_timeout
+
+	@classmethod
+	def _browser_headers_for_channel(cls, browser_channel: str) -> Dict[str, str]:
+		if browser_channel.startswith("msedge"):
+			user_agent = cls.WINDOWS_EDGE_USER_AGENT
+			sec_ch_ua = cls.WINDOWS_EDGE_SEC_CH_UA
+		elif browser_channel.startswith("chrome"):
+			user_agent = cls.WINDOWS_CHROME_USER_AGENT
+			sec_ch_ua = cls.WINDOWS_CHROME_SEC_CH_UA
+		else:
+			raise LINEOAError(
+				"browser_channel must be a Google Chrome or Microsoft Edge channel."
+			)
+		return {
+			"User-Agent": user_agent,
+			"sec-ch-ua": sec_ch_ua,
+			"sec-ch-ua-mobile": "?0",
+			"sec-ch-ua-platform": '"Windows"',
+		}
 
 	def get_uid_map_from_at_ids(self, at_id_list: List[str], chat_service: Any) -> Dict[str, str]:
 		"""
@@ -81,8 +104,9 @@ class AuthService:
 			raise LINEOAError("Cookie storage load error: cookies must be a list.")
 		return data
 
-	def _session_from_storage(self, data: Dict[str, Any]) -> requests.Session:
+	def _session_from_storage(self, data: Dict[str, Any], browser_channel: str = "chrome") -> requests.Session:
 		session = requests.Session()
+		session.headers.update(self._browser_headers_for_channel(browser_channel))
 		for cookie in data["cookies"]:
 			if not isinstance(cookie, dict):
 				continue
@@ -188,11 +212,11 @@ class AuthService:
 		user_name = bots_payload.get("userName")
 		return user_name if isinstance(user_name, str) else None, bot_ids
 
-	def login_with_email_and_2fa(self, email: Optional[str], password: Optional[str], get_2fa_code_callback: Optional[Callable[[], str]], recaptcha_response: str = "", stay_logged_in: bool = True, xsrf_token: Optional[str] = None, cookies: Optional[Dict[str, str]] = None, interactive_login: bool = False, browser_channel: str = "msedge", interactive_timeout: float = 300) -> Dict[str, Any]:
+	def login_with_email_and_2fa(self, email: Optional[str], password: Optional[str], get_2fa_code_callback: Optional[Callable[[], str]], recaptcha_response: str = "", stay_logged_in: bool = True, xsrf_token: Optional[str] = None, cookies: Optional[Dict[str, str]] = None, interactive_login: bool = False, browser_channel: str = "chrome", interactive_timeout: float = 300) -> Dict[str, Any]:
 		"""Authenticate with saved cookies, direct HTTP, or an interactive browser."""
 		stored_data = self._load_cookie_storage()
 		if stored_data is not None:
-			stored_session = self._session_from_storage(stored_data)
+			stored_session = self._session_from_storage(stored_data, browser_channel)
 			try:
 				user_name, bot_ids = self._initialize_chat_session(stored_session)
 				return {
@@ -217,6 +241,7 @@ class AuthService:
 			)
 
 		session = requests.Session()
+		session.headers.update(self._browser_headers_for_channel(browser_channel))
 		login_url, page_xsrf_token, _ = self._start_login(session)
 		login_response = self.login_with_email(
 			email=email,
@@ -288,6 +313,7 @@ class AuthService:
 
 		if interactive_timeout <= 0:
 			raise LINEOAError("interactive_timeout must be greater than zero.")
+		browser_headers = self._browser_headers_for_channel(browser_channel)
 
 		browser_cookies: List[Dict[str, Any]] = []
 		account_xsrf_token: Optional[str] = None
@@ -298,7 +324,14 @@ class AuthService:
 			except Exception as error:
 				raise LINEOAError(f"Failed to launch the interactive browser channel '{browser_channel}': {error}") from error
 			try:
-				context = browser.new_context()
+				context = browser.new_context(
+					user_agent=browser_headers["User-Agent"],
+					extra_http_headers={
+						"sec-ch-ua": browser_headers["sec-ch-ua"],
+						"sec-ch-ua-mobile": browser_headers["sec-ch-ua-mobile"],
+						"sec-ch-ua-platform": browser_headers["sec-ch-ua-platform"],
+					},
+				)
 				page = context.new_page()
 				captured_xsrf: Dict[str, Optional[str]] = {"value": None}
 				login_results: List[Dict[str, Any]] = []
@@ -409,6 +442,7 @@ class AuthService:
 				browser.close()
 
 		session = requests.Session()
+		session.headers.update(browser_headers)
 		for cookie in browser_cookies:
 			cookie_args: Dict[str, Any] = {
 				"path": cookie.get("path") or "/",

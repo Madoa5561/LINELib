@@ -85,6 +85,9 @@ class AuthServiceTests(unittest.TestCase):
             self.assertEqual("account-xsrf", post_kwargs["headers"]["X-XSRF-TOKEN"])
             self.assertEqual("owner@example.com", post_kwargs["json"]["email"])
             self.assertEqual("test-password", post_kwargs["json"]["password"])
+            session.headers.update.assert_called_once_with(
+                service._browser_headers_for_channel("chrome")
+            )
             saved = json.loads(storage_path.read_text(encoding="utf-8"))
             self.assertNotIn("email", saved)
             self.assertTrue(any(cookie["name"] == "XSRF-TOKEN" for cookie in saved["cookies"]))
@@ -113,7 +116,7 @@ class AuthServiceTests(unittest.TestCase):
         self.assertEqual("recaptcha", raised.exception.reason)
         self.assertEqual(1, session.get.call_count)
 
-    def test_interactive_login_starts_edge_before_direct_http_login(self):
+    def test_interactive_login_starts_chrome_before_direct_http_login(self):
         service = AuthService()
         expected = {"session": Mock(), "user_info": {}, "bot_ids": ["Ubot"]}
 
@@ -135,7 +138,33 @@ class AuthServiceTests(unittest.TestCase):
 
         self.assertIs(expected, result)
         start_login.assert_not_called()
-        self.assertEqual("msedge", interactive_login.call_args.kwargs["browser_channel"])
+        self.assertEqual("chrome", interactive_login.call_args.kwargs["browser_channel"])
+
+    def test_browser_headers_match_windows_chrome_and_edge(self):
+        service = AuthService()
+        chrome_headers = service._browser_headers_for_channel("chrome")
+        edge_headers = service._browser_headers_for_channel("msedge")
+
+        self.assertIn("Windows NT 10.0", chrome_headers["User-Agent"])
+        self.assertIn("Chrome/151.0.0.0", chrome_headers["User-Agent"])
+        self.assertNotIn("Edg/", chrome_headers["User-Agent"])
+        self.assertIn("Google Chrome", chrome_headers["sec-ch-ua"])
+        self.assertIn("Edg/151.0.0.0", edge_headers["User-Agent"])
+        self.assertIn("Microsoft Edge", edge_headers["sec-ch-ua"])
+        self.assertEqual('"Windows"', chrome_headers["sec-ch-ua-platform"])
+        self.assertEqual('"Windows"', edge_headers["sec-ch-ua-platform"])
+
+    def test_stored_session_uses_selected_browser_headers(self):
+        service = AuthService()
+        session = service._session_from_storage({"cookies": []}, "msedge")
+
+        self.assertEqual(service.WINDOWS_EDGE_USER_AGENT, session.headers["User-Agent"])
+        self.assertEqual(service.WINDOWS_EDGE_SEC_CH_UA, session.headers["sec-ch-ua"])
+
+    def test_unknown_browser_channel_is_rejected(self):
+        service = AuthService()
+        with self.assertRaisesRegex(Exception, "Google Chrome or Microsoft Edge"):
+            service._browser_headers_for_channel("chromium")
 
     def test_email_otp_callback_completes_verification(self):
         with tempfile.TemporaryDirectory() as temp_dir:
