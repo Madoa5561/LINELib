@@ -12,7 +12,7 @@ import random
 
 class LINELib:
 
-    def __init__(self, storage: Optional[str] = None, email: Optional[str] = None, password: Optional[str] = None, rate_limit: int = 18, rate_limit_window: float = 60, rate_limit_enabled: bool = True):
+    def __init__(self, storage: Optional[str] = None, email: Optional[str] = None, password: Optional[str] = None, rate_limit: int = 18, rate_limit_window: float = 60, rate_limit_enabled: bool = True, get_2fa_code_callback: Optional[Callable[[], str]] = None, interactive_login: bool = False, browser_channel: str = "chrome", interactive_timeout: float = 300):
         self.storage = storage or "lineoa-storage.json"
         self._storage_cache = None
         self._rate_limit = rate_limit
@@ -23,7 +23,14 @@ class LINELib:
         self._user_info = None
         self._xsrf_token = None
         if email and password:
-            login_result = self._auth.login_with_email_and_2fa(email, password, get_2fa_code_callback=None)
+            login_result = self._auth.login_with_email_and_2fa(
+                email,
+                password,
+                get_2fa_code_callback=get_2fa_code_callback,
+                interactive_login=interactive_login,
+                browser_channel=browser_channel,
+                interactive_timeout=interactive_timeout,
+            )
             self._session = login_result.get("session")
             self._user_info = login_result.get("user_info")
             self._bot_ids = login_result.get("bot_ids", [])

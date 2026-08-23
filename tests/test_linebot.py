@@ -1,6 +1,6 @@
 import threading
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from LINELib.linebot import LineBot
 
@@ -14,6 +14,26 @@ def make_bot(normalized):
 
 
 class LineBotTests(unittest.TestCase):
+    def test_interactive_login_options_are_forwarded(self):
+        otp_callback = Mock(return_value="123456")
+        with patch("LINELib.linebot.LINELib") as library_class:
+            library_class.return_value.bots.ids = {}
+
+            LineBot(
+                email="owner@example.com",
+                password="test-password",
+                get_2fa_code_callback=otp_callback,
+                interactive_login=True,
+                browser_channel="msedge",
+                interactive_timeout=120,
+            )
+
+        _, kwargs = library_class.call_args
+        self.assertIs(otp_callback, kwargs["get_2fa_code_callback"])
+        self.assertTrue(kwargs["interactive_login"])
+        self.assertEqual("msedge", kwargs["browser_channel"])
+        self.assertEqual(120, kwargs["interactive_timeout"])
+
     def test_media_event_routes_to_on_media_with_normalized_data(self):
         normalized = {"kind": "media", "message_type": "image", "message_id": "1"}
         bot = make_bot(normalized)

@@ -49,6 +49,12 @@ bot = LineBot(cookie_path="lineoa-storage.json")
 
 Cookie がない場合は `email` / `password` を渡すと、Chrome や Selenium を使わず、LINEヤフーBusiness ID のログインAPIへ直接ログインします。認証情報はCookieファイルへ保存されません。環境変数などから渡してください。
 
+reCAPTCHAが要求される環境で可視Chromeへ切り替える場合は、任意依存を追加します。Playwright自身のChromiumは不要で、端末にインストール済みのGoogle Chromeを使用します。
+
+```bash
+pip install "lineoa[interactive-login]"
+```
+
 ```python
 import os
 
@@ -59,6 +65,8 @@ try:
         cookie_path="lineoa-storage.json",
         email=os.environ["LINEOA_EMAIL"],
         password=os.environ["LINEOA_PASSWORD"],
+        get_2fa_code_callback=lambda: input("メールに届いた6桁のログインコード: ").strip(),
+        interactive_login=True,
     )
 except InteractiveLoginRequired as error:
     print(f"ブラウザでの追加認証が必要です: {error.reason}")
@@ -66,7 +74,11 @@ except InteractiveLoginRequired as error:
 
 保存済みCookieが有効なら、`email` / `password` を指定しても先にCookieを検証して再利用します。Cookieが失効している場合だけメールアドレスとパスワードを送信します。
 
-ログインAPIがreCAPTCHA、2段階認証、パスキーなどの追加確認を要求した場合、パスワードだけでは完了できません。LINELibはこれらを回避せず `InteractiveLoginRequired` を送出します。その場合は公式画面でログインし直し、Cookieファイルを更新してください。
+メール2段階認証が必要な場合は、`get_2fa_code_callback` が返した6桁コードを同じログインセッションで検証します。コードをソースやCookieファイルへ保存する必要はありません。
+
+reCAPTCHAはログインコードのように別途入力できる値ではなく、公式ページのブラウザセッション内で実行されます。ログインAPIから `needReCaptchaVerification` が返り、`interactive_login=True` の場合は可視Chromeを開きます。隠しreCAPTCHAは公式ページ上で通常実行され、視覚的な確認が表示された場合だけ利用者が操作してください。LINELibはCAPTCHAの解読や回避を行いません。
+
+verification画面へ進むとブラウザを閉じ、同じCookieとCSRFを引き継いだHTTPセッションでメールOTPを検証します。成功後のCookieは `cookie_path` へ保存されます。`interactive_login=False` の場合は従来どおり `InteractiveLoginRequired(reason="recaptcha")` を送出します。Google Chromeの代わりにEdgeを使う場合は `browser_channel="msedge"` を指定できます。
 
 ## 基本送信
 

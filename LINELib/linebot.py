@@ -20,6 +20,10 @@ class LineBot:
         reconnect_interval=5,
         max_reconnects=None,
         max_stream_seconds=82800,
+        get_2fa_code_callback=None,
+        interactive_login=False,
+        browser_channel="chrome",
+        interactive_timeout=300,
     ):
         self.cookie_path = cookie_path
         self.listen_config = ListenConfig(
@@ -47,6 +51,10 @@ class LineBot:
             rate_limit=rate_limit,
             rate_limit_window=rate_limit_window,
             rate_limit_enabled=rate_limit_enabled,
+            get_2fa_code_callback=get_2fa_code_callback,
+            interactive_login=interactive_login,
+            browser_channel=browser_channel,
+            interactive_timeout=interactive_timeout,
         )
         self._session = self._lib._session
         self._xsrf_token = self._lib._xsrf_token

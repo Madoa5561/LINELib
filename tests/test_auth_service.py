@@ -113,6 +113,57 @@ class AuthServiceTests(unittest.TestCase):
         self.assertEqual("recaptcha", raised.exception.reason)
         self.assertEqual(1, session.get.call_count)
 
+    def test_email_otp_callback_completes_verification(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            storage_path = Path(temp_dir) / "lineoa-storage.json"
+            service = AuthService(cookie_store_path=str(storage_path))
+            session = mock_session()
+            session.get.side_effect = [
+                StubResponse(url="https://account.line.biz/login?redirectUri=masked", text=login_page()),
+                StubResponse(url=service.EMAIL_VERIFICATION_URL),
+                StubResponse(url="https://manager.line.biz/"),
+                StubResponse(url="https://chat.line.biz/"),
+                StubResponse(url=service.CHAT_CSRF_URL, payload={"token": "chat-xsrf"}),
+                StubResponse(url=service.CHAT_BOTS_URL, payload={"list": [{"botId": "Ubot"}]}),
+            ]
+            session.post.side_effect = [
+                StubResponse(
+                    url=service.EMAIL_LOGIN_URL,
+                    payload={"status": "success", "redirectUri": service.EMAIL_VERIFICATION_URL},
+                ),
+                StubResponse(
+                    url=service.EMAIL_VERIFICATION_VERIFY_URL,
+                    payload={
+                        "status": "success",
+                        "redirectUri": "https://account.line.biz/oauth2/callback?state=masked",
+                    },
+                ),
+            ]
+            otp_callback = Mock(return_value="123456")
+
+            with patch("LINELib.AuthService.requests.Session", return_value=session):
+                result = service.login_with_email_and_2fa(
+                    "owner@example.com",
+                    "test-password",
+                    get_2fa_code_callback=otp_callback,
+                )
+
+            self.assertEqual(["Ubot"], result["bot_ids"])
+            otp_callback.assert_called_once_with()
+            otp_call = session.post.call_args_list[1]
+            self.assertEqual(service.EMAIL_VERIFICATION_VERIFY_URL, otp_call.args[0])
+            self.assertEqual({"code": "123456"}, otp_call.kwargs["json"])
+            self.assertEqual("account-xsrf", otp_call.kwargs["headers"]["X-XSRF-TOKEN"])
+
+    def test_email_otp_rejects_non_six_digit_code(self):
+        service = AuthService()
+        session = mock_session()
+
+        with self.assertRaisesRegex(Exception, "exactly six digits"):
+            service.verify_email_otp(session, "12345x", "account-xsrf")
+
+        session.post.assert_not_called()
+
     def test_stored_cookies_are_reused_without_storing_email(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             storage_path = Path(temp_dir) / "lineoa-storage.json"
