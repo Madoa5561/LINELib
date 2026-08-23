@@ -341,8 +341,13 @@ class AuthService:
 		}
 		try:
 			response = session.post(self.EMAIL_LOGIN_URL, headers=headers, json=payload, timeout=self.request_timeout)
+			response_payload = response.json()
+			if not isinstance(response_payload, dict):
+				raise ValueError("login response must be a JSON object")
+			if response.ok or (400 <= response.status_code < 500 and isinstance(response_payload.get("status"), str)):
+				return response_payload
 			response.raise_for_status()
-			return response.json()
+			return response_payload
 		except (requests.RequestException, ValueError) as error:
 			raise LINEOAError(f"login_with_email failed: {error}") from error
 

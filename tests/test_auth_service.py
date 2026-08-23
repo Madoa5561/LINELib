@@ -20,6 +20,10 @@ class StubResponse:
         self.headers = headers or {}
         self.is_redirect = status_code in {301, 302, 303, 307, 308}
 
+    @property
+    def ok(self):
+        return self.status_code < 400
+
     def raise_for_status(self):
         if self.status_code >= 400:
             raise requests.HTTPError(f"HTTP {self.status_code}")
@@ -95,6 +99,7 @@ class AuthServiceTests(unittest.TestCase):
         session.post.return_value = StubResponse(
             url=service.EMAIL_LOGIN_URL,
             payload={"status": "needReCaptchaVerification"},
+            status_code=400,
         )
 
         with patch("LINELib.AuthService.requests.Session", return_value=session):
