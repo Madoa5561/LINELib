@@ -1,12 +1,10 @@
 import os
 
-from LINELib import LineBot
+from _login import create_bot
 
 
 BOT_ID = os.environ["LINEOA_BOT_ID"]
-COOKIE_PATH = os.environ.get("LINEOA_COOKIE_PATH", "lineoa-storage.json")
-
-bot = LineBot(cookie_path=COOKIE_PATH, ping_secs=30, max_stream_seconds=7200)
+bot = create_bot(ping_secs=30, max_stream_seconds=7200)
 
 
 @bot.event

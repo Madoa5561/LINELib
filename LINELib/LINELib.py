@@ -12,7 +12,7 @@ import random
 
 class LINELib:
 
-    def __init__(self, storage: Optional[str] = None, email: Optional[str] = None, password: Optional[str] = None, rate_limit: int = 18, rate_limit_window: float = 60, rate_limit_enabled: bool = True, get_2fa_code_callback: Optional[Callable[[], str]] = None, interactive_login: bool = False, browser_channel: str = "chrome", interactive_timeout: float = 300):
+    def __init__(self, storage: Optional[str] = None, email: Optional[str] = None, password: Optional[str] = None, rate_limit: int = 18, rate_limit_window: float = 60, rate_limit_enabled: bool = True, get_2fa_code_callback: Optional[Callable[[], str]] = None, interactive_login: bool = False, browser_channel: str = "msedge", interactive_timeout: float = 300):
         self.storage = storage or "lineoa-storage.json"
         self._storage_cache = None
         self._rate_limit = rate_limit

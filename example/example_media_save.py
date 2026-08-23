@@ -1,12 +1,11 @@
 import json
 import os
 
-from LINELib import LineBot
+from _login import create_bot
 
 
 def main() -> None:
-    cookie_path = os.environ.get("LINEOA_COOKIE_PATH", "lineoa-storage.json")
-    bot = LineBot(cookie_path=cookie_path)
+    bot = create_bot()
 
     event_path = os.environ["LINEOA_EVENT_JSON"]
     with open(event_path, "r", encoding="utf-8") as f:

@@ -1,15 +1,14 @@
 import os
 
-from LINELib.linebot import LineBot
+from _login import create_bot
 
 
 def main() -> None:
-    cookie_path = os.environ.get("LINEOA_COOKIE_PATH", "lineoa-storage.json")
     bot_id = os.environ["LINEOA_BOT_ID"]
     chat_id = os.environ["LINEOA_CHAT_ID"]
     at_id = os.environ["LINEOA_AT_ID"]
 
-    bot = LineBot(cookie_path=cookie_path)
+    bot = create_bot()
     bot.create_and_send_flex(
         bot_id=bot_id,
         at_id=at_id,

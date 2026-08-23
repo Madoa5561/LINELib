@@ -113,6 +113,30 @@ class AuthServiceTests(unittest.TestCase):
         self.assertEqual("recaptcha", raised.exception.reason)
         self.assertEqual(1, session.get.call_count)
 
+    def test_interactive_login_starts_edge_before_direct_http_login(self):
+        service = AuthService()
+        expected = {"session": Mock(), "user_info": {}, "bot_ids": ["Ubot"]}
+
+        with (
+            patch.object(service, "_load_cookie_storage", return_value=None),
+            patch.object(service, "_start_login") as start_login,
+            patch.object(
+                service,
+                "_login_with_interactive_browser",
+                return_value=expected,
+            ) as interactive_login,
+        ):
+            result = service.login_with_email_and_2fa(
+                "owner@example.com",
+                "test-password",
+                get_2fa_code_callback=None,
+                interactive_login=True,
+            )
+
+        self.assertIs(expected, result)
+        start_login.assert_not_called()
+        self.assertEqual("msedge", interactive_login.call_args.kwargs["browser_channel"])
+
     def test_email_otp_callback_completes_verification(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             storage_path = Path(temp_dir) / "lineoa-storage.json"

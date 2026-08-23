@@ -37,7 +37,7 @@ pip install -e .
 
 ## セットアップ
 
-最初に Cookie ベースでログイン済みの状態を用意するのが基本です。
+最初にCookieベースでログイン済みの状態を用意するのが基本です。
 
 ```python
 from LINELib import LineBot
@@ -45,11 +45,11 @@ from LINELib import LineBot
 bot = LineBot(cookie_path="lineoa-storage.json")
 ```
 
-`lineoa-storage.json`にはログインCookieが平文で保存されます。Gitへcommitしたり、第三者と共有したりしないでください。
+`lineoa-storage.json`にはログインCookieが平文で保存されます。Gitへcommitしたり、第三者と共有したりしないでください。保存済みCookieが有効なら、メールアドレスやパスワードを送信せずに再利用します。
 
-Cookie がない場合は `email` / `password` を渡すと、Chrome や Selenium を使わず、LINEヤフーBusiness ID のログインAPIへ直接ログインします。認証情報はCookieファイルへ保存されません。環境変数などから渡してください。
+### Windows / Microsoft Edgeで初回ログイン
 
-reCAPTCHAが要求される環境で可視Chromeへ切り替える場合は、任意依存を追加します。Playwright自身のChromiumは不要で、端末にインストール済みのGoogle Chromeを使用します。
+reCAPTCHAを含む初回ログインには、Windowsへインストール済みのMicrosoft Edgeを使う対話ログインを推奨します。任意依存を追加してください。Playwright自身のChromiumを別途ダウンロードする必要はありません。
 
 ```bash
 pip install "lineoa[interactive-login]"
@@ -67,18 +67,23 @@ try:
         password=os.environ["LINEOA_PASSWORD"],
         get_2fa_code_callback=lambda: input("メールに届いた6桁のログインコード: ").strip(),
         interactive_login=True,
+        browser_channel="msedge",
     )
 except InteractiveLoginRequired as error:
     print(f"ブラウザでの追加認証が必要です: {error.reason}")
 ```
 
-保存済みCookieが有効なら、`email` / `password` を指定しても先にCookieを検証して再利用します。Cookieが失効している場合だけメールアドレスとパスワードを送信します。
+`browser_channel`の既定値は`msedge`です。`interactive_login=True`では、保存Cookieの検証後、PythonからログインAPIへ認証情報を事前送信せず、最初から実際のMicrosoft Edgeで公式ログイン画面を開きます。Windows/EdgeのUser-AgentとplatformはEdge自身が送信し、LINELibによるUA偽装は行いません。
 
 メール2段階認証が必要な場合は、`get_2fa_code_callback` が返した6桁コードを同じログインセッションで検証します。コードをソースやCookieファイルへ保存する必要はありません。
 
-reCAPTCHAはログインコードのように別途入力できる値ではなく、公式ページのブラウザセッション内で実行されます。ログインAPIから `needReCaptchaVerification` が返り、`interactive_login=True` の場合は可視Chromeを開きます。隠しreCAPTCHAは公式ページ上で通常実行され、視覚的な確認が表示された場合だけ利用者が操作してください。LINELibはCAPTCHAの解読や回避を行いません。
+reCAPTCHAはログインコードのように別途入力できる値ではなく、公式ページのブラウザセッション内で実行されます。隠しreCAPTCHAは公式ページ上で通常実行され、視覚的な確認が表示された場合だけ利用者が操作してください。LINELibはCAPTCHAの解読や回避を行いません。
 
-verification画面へ進むとブラウザを閉じ、同じCookieとCSRFを引き継いだHTTPセッションでメールOTPを検証します。成功後のCookieは `cookie_path` へ保存されます。`interactive_login=False` の場合は従来どおり `InteractiveLoginRequired(reason="recaptcha")` を送出します。Google Chromeの代わりにEdgeを使う場合は `browser_channel="msedge"` を指定できます。
+verification画面へ進むと対話ブラウザを閉じ、同じCookieとCSRFを引き継いだHTTPセッションでメールOTPを検証します。成功後のCookieは`cookie_path`へ保存されます。Edgeが利用できない環境では`browser_channel="chrome"`を明示してGoogle Chromeへ切り替えられます。
+
+### ブラウザを使わない直接HTTPログイン
+
+`interactive_login=False`のまま`email` / `password`を渡すと、ブラウザやSeleniumを使わずLINEヤフーBusiness IDのログインAPIへ直接ログインします。reCAPTCHAが要求されなければそのまま完了し、要求された場合は`InteractiveLoginRequired(reason="recaptcha")`を送出します。認証情報はCookieファイルへ保存されません。
 
 ## 基本送信
 
@@ -406,7 +411,7 @@ def on_media(event):
 
 ```python
 import asyncio
-from LINELib.LINELib import LINELib
+from LINELib import LINELib
 
 async def main():
     lib = LINELib(storage="lineoa-storage.json")
@@ -429,6 +434,7 @@ python -m unittest discover -s tests
 
 `example/` には、README と同じ内容の実行例を置いてあります。
 
+- `example_login_edge.py`
 - `example_send_text.py`
 - `sendfile.py`
 - `example_send_flex.py`
@@ -437,11 +443,24 @@ python -m unittest discover -s tests
 - `example_hybrid.py`
 - `example_media_save.py`
 
+初回ログイン例はWindows PowerShellで次のように実行します。
+
+```powershell
+python .\example\example_login_edge.py
+```
+
+メールアドレスを入力後、パスワードは画面へ表示されない入力欄で受け取ります。`LINEOA_EMAIL`と`LINEOA_PASSWORD`が設定済みなら入力を省略できます。Microsoft Edgeが開き、必要ならターミナルでメールOTPの入力待ちになります。成功すると`LINEOA_COOKIE_PATH`または`lineoa-storage.json`へCookieを保存します。以後のexampleは同じCookieを再利用するため、Cookieが有効な間は認証情報を設定しなくても実行できます。
+
+`example_login_edge.py`はEdge初回ログインの引数をすべて明示した自己完結例です。その他の既存exampleは`example/_login.py`の共通認証処理を使います。Cookieが失効していて`LINEOA_EMAIL`と`LINEOA_PASSWORD`が設定されている場合は、自動的にEdgeログインへ移行します。
+
 `example_hybrid.py`のHTTPサーバーはローカル確認用として`127.0.0.1:6100`だけで待ち受けます。公開Webhookとして使う場合に必要な署名検証は実装していません。
 
 実行前に必要な環境変数:
 
-- `LINEOA_COOKIE_PATH`
+- `LINEOA_COOKIE_PATH`（任意、既定値: `lineoa-storage.json`）
+- `LINEOA_EMAIL` / `LINEOA_PASSWORD`（初回ログインまたはCookie失効時）
+- `LINEOA_BROWSER_CHANNEL`（任意、既定値: `msedge`）
+- `LINEOA_INTERACTIVE_TIMEOUT`（任意、既定値: `300`秒）
 - `LINEOA_BOT_ID`
 - `LINEOA_CHAT_ID`
 - `LINEOA_AT_ID`

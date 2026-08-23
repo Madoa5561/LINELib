@@ -188,8 +188,8 @@ class AuthService:
 		user_name = bots_payload.get("userName")
 		return user_name if isinstance(user_name, str) else None, bot_ids
 
-	def login_with_email_and_2fa(self, email: Optional[str], password: Optional[str], get_2fa_code_callback: Optional[Callable[[], str]], recaptcha_response: str = "", stay_logged_in: bool = True, xsrf_token: Optional[str] = None, cookies: Optional[Dict[str, str]] = None, interactive_login: bool = False, browser_channel: str = "chrome", interactive_timeout: float = 300) -> Dict[str, Any]:
-		"""Log in without Selenium, reusing stored cookies when they remain valid."""
+	def login_with_email_and_2fa(self, email: Optional[str], password: Optional[str], get_2fa_code_callback: Optional[Callable[[], str]], recaptcha_response: str = "", stay_logged_in: bool = True, xsrf_token: Optional[str] = None, cookies: Optional[Dict[str, str]] = None, interactive_login: bool = False, browser_channel: str = "msedge", interactive_timeout: float = 300) -> Dict[str, Any]:
+		"""Authenticate with saved cookies, direct HTTP, or an interactive browser."""
 		stored_data = self._load_cookie_storage()
 		if stored_data is not None:
 			stored_session = self._session_from_storage(stored_data)
@@ -206,6 +206,15 @@ class AuthService:
 
 		if not email or not password:
 			raise LINEOAError("Email and password are required when no valid cookie session is available.")
+		if interactive_login:
+			return self._login_with_interactive_browser(
+				email=email,
+				password=password,
+				get_2fa_code_callback=get_2fa_code_callback,
+				stay_logged_in=stay_logged_in,
+				browser_channel=browser_channel,
+				interactive_timeout=interactive_timeout,
+			)
 
 		session = requests.Session()
 		login_url, page_xsrf_token, _ = self._start_login(session)
@@ -220,15 +229,6 @@ class AuthService:
 		)
 		status = login_response.get("status")
 		if status == "needReCaptchaVerification":
-			if interactive_login:
-				return self._login_with_interactive_browser(
-					email=email,
-					password=password,
-					get_2fa_code_callback=get_2fa_code_callback,
-					stay_logged_in=stay_logged_in,
-					browser_channel=browser_channel,
-					interactive_timeout=interactive_timeout,
-				)
 			raise InteractiveLoginRequired("recaptcha")
 		if status != "success":
 			raise LINEOAError(f"Email login failed with status: {status or 'unknown'}")
@@ -352,7 +352,8 @@ class AuthService:
 					)
 
 				lineoa_logger.info(
-					"Interactive LINE Business login opened. Complete reCAPTCHA in the browser if it appears."
+					f"Interactive LINE Business login opened in {browser_channel}. "
+					"Complete reCAPTCHA in the browser if it appears."
 				)
 				form_button_target = page.locator(
 					'[data-email-login-form-button]:visible [data-button-target]'
