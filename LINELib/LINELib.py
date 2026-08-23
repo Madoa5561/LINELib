@@ -22,22 +22,23 @@ class LINELib:
         self._session = None
         self._user_info = None
         self._xsrf_token = None
-        try:
-            self._restore_session_from_cookie()
-        except LINEOAError:
-            if email and password:
-                login_result = self._auth.login_with_email_and_2fa(email, password, get_2fa_code_callback=None)
-                self._session = login_result.get("session")
-                self._user_info = login_result.get("user_info")
-                self._bot_ids = login_result.get("bot_ids", [])
-                for c in self._session.cookies:
-                    if c.name == "XSRF-TOKEN" and "chat.line.biz" in c.domain:
-                        self._xsrf_token = c.value
-                        break
-            else:
+        if email and password:
+            login_result = self._auth.login_with_email_and_2fa(email, password, get_2fa_code_callback=None)
+            self._session = login_result.get("session")
+            self._user_info = login_result.get("user_info")
+            self._bot_ids = login_result.get("bot_ids", [])
+        else:
+            try:
+                self._restore_session_from_cookie()
+            except LINEOAError:
                 self._session = requests.Session()
         if self._session is None:
             self._session = requests.Session()
+        if self._xsrf_token is None:
+            for cookie in self._session.cookies:
+                if cookie.name == "XSRF-TOKEN" and "chat.line.biz" in cookie.domain:
+                    self._xsrf_token = cookie.value
+                    break
         self._chat_service = ChatService()
         self._bots = None
         self._bot_ids = getattr(self, "_bot_ids", [])
@@ -559,7 +560,15 @@ class LINELib:
             raise LINEOAError("cookie storage is invalid")
         session = requests.Session()
         for c in data["cookies"]:
-            session.cookies.set(c["name"], c["value"], domain=c.get("domain"))
+            cookie_args = {"path": c.get("path") or "/"}
+            if c.get("domain"):
+                cookie_args["domain"] = c["domain"]
+            expires = c.get("expiry", c.get("expires"))
+            if isinstance(expires, (int, float)):
+                cookie_args["expires"] = int(expires)
+            if isinstance(c.get("secure"), bool):
+                cookie_args["secure"] = c["secure"]
+            session.cookies.set(c["name"], c["value"], **cookie_args)
         self._session = session
         self._user_info = {"email": data.get("email"), "user_name": data.get("user_name")}
         for c in session.cookies:

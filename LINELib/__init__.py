@@ -1,7 +1,7 @@
 from .linebot import LineBot
 from .ChatService import ChatService
 from .AuthService import AuthService
-from .exceptions import LINEOAError
+from .exceptions import InteractiveLoginRequired, LINEOAError
 from .util import merge_dicts
 from .LINELib import LINELib
 from .config import ListenConfig, RateLimitConfig
@@ -10,6 +10,7 @@ __all__ = [
     "ChatService",
     "AuthService",
     "LINEOAError",
+    "InteractiveLoginRequired",
     "merge_dicts",
     "LineBot",
     "LINELib",
@@ -19,7 +20,7 @@ __all__ = [
     "SSEParser",
 ]
 __author__ = "madoa5561"
-__version__ = "7.7.8"
+__version__ = "7.7.9"
 
 __license__ = "MIT"
 

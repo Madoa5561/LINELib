@@ -47,15 +47,26 @@ bot = LineBot(cookie_path="lineoa-storage.json")
 
 `lineoa-storage.json`にはログインCookieが平文で保存されます。Gitへcommitしたり、第三者と共有したりしないでください。
 
-Cookie がない場合は `email` / `password` を渡してブラウザログインを開始します。Chrome が開くため、画面上で2段階認証などを完了してください。
+Cookie がない場合は `email` / `password` を渡すと、Chrome や Selenium を使わず、LINEヤフーBusiness ID のログインAPIへ直接ログインします。認証情報はCookieファイルへ保存されません。環境変数などから渡してください。
 
 ```python
-bot = LineBot(
-    cookie_path="lineoa-storage.json",
-    email="your@email.com",
-    password="yourpassword",
-)
+import os
+
+from LINELib import InteractiveLoginRequired, LineBot
+
+try:
+    bot = LineBot(
+        cookie_path="lineoa-storage.json",
+        email=os.environ["LINEOA_EMAIL"],
+        password=os.environ["LINEOA_PASSWORD"],
+    )
+except InteractiveLoginRequired as error:
+    print(f"ブラウザでの追加認証が必要です: {error.reason}")
 ```
+
+保存済みCookieが有効なら、`email` / `password` を指定しても先にCookieを検証して再利用します。Cookieが失効している場合だけメールアドレスとパスワードを送信します。
+
+ログインAPIがreCAPTCHA、2段階認証、パスキーなどの追加確認を要求した場合、パスワードだけでは完了できません。LINELibはこれらを回避せず `InteractiveLoginRequired` を送出します。その場合は公式画面でログインし直し、Cookieファイルを更新してください。
 
 ## 基本送信
 
@@ -146,7 +157,7 @@ thread.join()
 polling は次の順序で動きます。
 
 1. `streamingApiToken` を取得
-2. `streaming/state` を `{"connectionId": "...", "idle": true}` で送信
+2. レスポンスに `connectionId` がある場合だけ、`streaming/state` を `{"connectionId": "...", "idle": true}` で送信
 3. `streamingApiBaseUrl` と `streamingApiVersion` に従って SSE 接続
 4. `lastEventId` を引き継いで再接続
 5. `expiredAt` を見て、期限前に張り替え
