@@ -58,7 +58,7 @@ result = bot.sendFile(
 )
 ```
 
-ファイルをアップロードして `contentMessageToken` を取得し、そのtokenを使って送信します。ファイルが存在しない場合はPythonのファイル例外、uploadまたは送信が失敗した場合は `LINEOAError` になります。
+ファイルをアップロードして `contentMessageToken` を取得し、そのtokenを使って送信します。ファイルが存在しない場合、uploadまたは送信が失敗した場合はいずれも `LINEOAError` になります。
 
 ## メンション送信
 
@@ -98,7 +98,7 @@ card_id = bot.create_and_send_flex(
 print(card_id)
 ```
 
-戻り値は作成されたカードIDです。`delete_after_send=True` では送信後にManager側の一時カードを削除します。送信済みメッセージを取り消す指定ではありません。`image_url` はLINE側から取得できる公開HTTPS URLを使用してください。
+戻り値は作成されたカードIDです。ローカルレート制限中は戻り値の型を変えず、`LINEOAError(code="rate_limited")` を送出します。`delete_after_send=True` では送信後にManager側の一時カードを削除します。送信済みメッセージを取り消す指定ではありません。`image_url` はLINE側から取得できる公開HTTPS URLを使用してください。
 
 ## Bot、チャット、履歴、メンバー
 
@@ -207,7 +207,7 @@ sticker_path = bot.save_sticker_image(
 
 ## ローカルレート制限
 
-`LineBot` の既定値は60秒間に18回です。テキスト、ファイル、メンションの送信履歴をCookie保存先と同じJSONへ記録します。
+`LineBot` の既定値は60秒間に18回です。テキスト、ファイル、メンション、カード型Flexの送信枠をCookie保存先と同じJSONへ記録します。判定と記録はlock内で一括実行されるため、複数スレッド／プロセスからの同時送信でも同じ上限を共有します。`rate_limit_enabled=False` では送信枠を記録しません。
 
 ```python
 status = bot.getRateLimitStatus()

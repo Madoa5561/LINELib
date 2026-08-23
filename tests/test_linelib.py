@@ -1,6 +1,7 @@
 import importlib
 import json
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -9,12 +10,13 @@ from unittest.mock import AsyncMock, Mock, patch
 
 linelib_module = importlib.import_module("LINELib.LINELib")
 LINELib = linelib_module.LINELib
+RateLimitConfig = importlib.import_module("LINELib.config").RateLimitConfig
 
 
 def make_library(storage_path):
+    storage_path.write_text('{"cookies": []}', encoding="utf-8")
     library = LINELib.__new__(LINELib)
     library.storage = str(storage_path)
-    library._storage_cache = {"cookies": []}
     library._rate_limit = 18
     library._rate_limit_window = 60
     library._rate_limit_enabled = True
@@ -26,20 +28,52 @@ def make_library(storage_path):
 
 
 class LINELibTests(unittest.TestCase):
+    def test_rate_limit_config_normalizes_numbers_and_rejects_non_boolean(self):
+        config = RateLimitConfig(limit="3", window="2.5", enabled=True)
+
+        self.assertEqual(3, config.limit)
+        self.assertEqual(2.5, config.window)
+        with self.assertRaisesRegex(ValueError, "boolean"):
+            RateLimitConfig(enabled="false")
+
+    def test_partial_email_credentials_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            storage_path = Path(temp_dir) / "storage.json"
+
+            with self.assertRaisesRegex(ValueError, "provided together"):
+                LINELib(storage=str(storage_path), email="owner@example.com")
+
+    def test_missing_cookie_storage_is_not_silently_accepted(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            storage_path = Path(temp_dir) / "storage.json"
+
+            with self.assertRaisesRegex(Exception, "cookie storage"):
+                LINELib(storage=str(storage_path))
+
     def test_cookie_restore_uses_selected_edge_headers(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             storage_path = Path(temp_dir) / "storage.json"
-            storage_path.write_text('{"cookies": []}', encoding="utf-8")
+            storage_path.write_text(
+                '{"cookies": [{"name": "session", "value": "value", "domain": "chat.line.biz"}]}',
+                encoding="utf-8",
+            )
             library = LINELib(storage=str(storage_path), browser_channel="msedge")
 
         self.assertIn("Edg/151.0.0.0", library._session.headers["User-Agent"])
         self.assertIn("Microsoft Edge", library._session.headers["sec-ch-ua"])
+        self.assertEqual(
+            library._session.headers["User-Agent"],
+            library._chat_service.browser_headers["User-Agent"],
+        )
 
     def test_rate_limit_cleanup_uses_configured_window(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             library = make_library(Path(temp_dir) / "storage.json")
             library._rate_limit_window = 10
-            library._storage_cache["SendTimestamps"] = [50.0, 95.0]
+            Path(library.storage).write_text(
+                '{"cookies": [], "SendTimestamps": [50.0, 95.0]}',
+                encoding="utf-8",
+            )
             with patch.object(linelib_module.time, "time", return_value=100.0):
                 timestamps = library.get_send_timestamps()
 
@@ -52,7 +86,75 @@ class LINELibTests(unittest.TestCase):
             for timestamp in range(25):
                 library.add_send_timestamp(float(timestamp))
 
-        self.assertEqual(25, len(library._storage_cache["SendTimestamps"]))
+            stored = json.loads(Path(library.storage).read_text(encoding="utf-8"))
+
+        self.assertEqual(25, len(stored["SendTimestamps"]))
+
+    def test_concurrent_rate_limit_reservations_do_not_exceed_limit(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = make_library(Path(temp_dir) / "storage.json")
+            library._rate_limit = 10
+            library._rate_limit_window = 60
+            results = []
+
+            def reserve():
+                results.append(library._reserve_send_slot())
+
+            threads = [threading.Thread(target=reserve) for _ in range(40)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+            stored = json.loads(Path(library.storage).read_text(encoding="utf-8"))
+
+        self.assertEqual(10, sum(result is None for result in results))
+        self.assertEqual(10, len(stored["SendTimestamps"]))
+        self.assertIn("cookies", stored)
+
+    def test_disabled_rate_limit_does_not_record_send_slot(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = make_library(Path(temp_dir) / "storage.json")
+            library._rate_limit_enabled = False
+
+            result = library._reserve_send_slot()
+            stored = json.loads(Path(library.storage).read_text(encoding="utf-8"))
+
+        self.assertIsNone(result)
+        self.assertNotIn("SendTimestamps", stored)
+
+    def test_async_cookie_header_respects_domain_and_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = make_library(Path(temp_dir) / "storage.json")
+            library._session = linelib_module.requests.Session()
+            library._session.cookies.set("api-cookie", "allowed", domain="chat.line.biz", path="/api")
+            library._session.cookies.set("other-cookie", "blocked", domain="manager.line.biz", path="/")
+
+            header = library._async_cookie_header()
+
+        self.assertIn("api-cookie=allowed", header)
+        self.assertNotIn("other-cookie", header)
+
+    def test_flex_rate_limit_preserves_integer_return_contract(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = make_library(Path(temp_dir) / "storage.json")
+            library._rate_limit = 1
+            Path(library.storage).write_text(
+                json.dumps({"cookies": [], "SendTimestamps": [time.time()]}),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(linelib_module.LINEOAError) as raised:
+                library.create_and_send_flex(
+                    bot_id="Ubot",
+                    at_id="@bot",
+                    chat_id="Uchat",
+                    title="title",
+                    image_url="https://example.com/image.png",
+                )
+
+        self.assertEqual("rate_limited", raised.exception.code)
+        library._chat_service.create_and_send_flex.assert_not_called()
 
     def test_streaming_state_receives_session_and_xsrf(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -102,7 +204,10 @@ class AsyncLINELibTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             library = make_library(Path(temp_dir) / "storage.json")
             library._rate_limit = 2
-            library.get_send_timestamps = Mock(return_value=[time.time(), time.time()])
+            Path(library.storage).write_text(
+                json.dumps({"cookies": [], "SendTimestamps": [time.time(), time.time()]}),
+                encoding="utf-8",
+            )
             library._chat_service.async_send_message = AsyncMock()
 
             result = await library.async_send_message("Uchat", "text", bot_id="Ubot")

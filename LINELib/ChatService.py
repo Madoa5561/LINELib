@@ -2,18 +2,22 @@ import requests
 import aiohttp
 import os
 import time
+import tempfile
+import threading
+import urllib.parse
 from datetime import datetime
 import random
 import json
-from typing import Optional, Dict, Any, Callable, Generator
+from typing import Optional, Dict, Any, Callable, Generator, Union
+from .browser_profile import browser_headers_for_channel
 from .exceptions import LINEOAError
+from .session_utils import cookie_header, get_stream_cookie_dict, get_xsrf_token
 from .sse import SSEParser
 from .util import merge_dicts
-import requests as _requests
 from .logger import lineoa_logger
 
 class ChatService:
-    def __init__(self, request_timeout: float = 30, upload_timeout: float = 120):
+    def __init__(self, request_timeout: float = 30, upload_timeout: float = 120, browser_headers: Optional[Dict[str, str]] = None):
         self.v1_BASE_URL = "https://chat.line.biz/api/v1"
         self.v2_BASE_URL = "https://chat.line.biz/api/v2"
         self.v3_BASE_URL = "https://chat.line.biz/api/v3"
@@ -22,13 +26,16 @@ class ChatService:
         self.chat_client_version = "20240513144702"
         self.request_timeout = request_timeout
         self.upload_timeout = upload_timeout
+        self.browser_headers = dict(browser_headers or browser_headers_for_channel("chrome"))
+        self._stream_lock = threading.Lock()
+        self._active_stream_response: Optional[requests.Response] = None
         self.headers = {
             "Content-Type": "application/json"
         }
 
     def _base_headers(self) -> Dict[str, str]:
         return {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
+            **self.browser_headers,
             "Accept": "application/json, text/plain, */*",
             "x-oa-chat-client-version": self.chat_client_version,
         }
@@ -41,37 +48,80 @@ class ChatService:
             headers["Referer"] = referer
         if xsrf_token:
             headers["x-xsrf-token"] = xsrf_token
-        if isinstance(session, _requests.Session):
-            cookie_dict = {}
-            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
-                try:
-                    cookie_dict.update(session.cookies.get_dict(domain=dom))
-                except Exception:
-                    pass
-            if cookie_dict:
-                headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
         return headers
+
+    def _browser_request_headers(self, **extra: str) -> Dict[str, str]:
+        headers = self._base_headers()
+        headers.update(extra)
+        return headers
+
+    @staticmethod
+    def _request(action: str, request_method: Callable[..., requests.Response], *args: Any, **kwargs: Any) -> requests.Response:
+        try:
+            return request_method(*args, **kwargs)
+        except requests.RequestException as error:
+            raise LINEOAError(f"{action} failed: {type(error).__name__}") from error
+
+    @staticmethod
+    def _cookie_value(cookies: Any) -> str:
+        if isinstance(cookies, str):
+            return cookies
+        if isinstance(cookies, dict):
+            return cookie_header(cookies)
+        return ""
+
+    @staticmethod
+    def _json_response(response: requests.Response, action: str, allow_empty: bool = False) -> Dict[str, Any]:
+        if not response.ok:
+            raise LINEOAError(f"{action} failed: HTTP {response.status_code}")
+        if allow_empty and not response.text:
+            return {}
+        try:
+            payload = response.json()
+        except ValueError as error:
+            raise LINEOAError(f"{action} failed: invalid JSON response") from error
+        if not isinstance(payload, dict):
+            raise LINEOAError(f"{action} failed: JSON response must be an object")
+        return payload
+
+    @staticmethod
+    async def _async_json_response(response: aiohttp.ClientResponse, action: str, allow_empty: bool = False) -> Dict[str, Any]:
+        if response.status >= 400:
+            raise LINEOAError(f"{action} failed: HTTP {response.status}")
+        if allow_empty and response.content_length == 0:
+            return {}
+        try:
+            try:
+                payload = await response.json(content_type=None)
+            except TypeError:
+                payload = await response.json()
+        except (ValueError, aiohttp.ContentTypeError) as error:
+            raise LINEOAError(f"{action} failed: invalid JSON response") from error
+        if not isinstance(payload, dict):
+            raise LINEOAError(f"{action} failed: JSON response must be an object")
+        return payload
+
+    def _close_stream(self) -> None:
+        """Close the current SSE response so a polling thread can stop promptly."""
+        with self._stream_lock:
+            response = self._active_stream_response
+        if response is not None:
+            response.close()
 
     def _get_json(self, url: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None, params: Optional[Dict[str, Any]] = None, origin: Optional[str] = None, referer: Optional[str] = None) -> Dict[str, Any]:
         req = session if session else requests
-        resp = req.get(url, headers=self._session_headers(session, xsrf_token=xsrf_token, origin=origin, referer=referer), params=params, timeout=self.request_timeout)
-        if not resp.ok:
-            raise LINEOAError(f"GET {url} failed: {resp.status_code} {resp.text}")
-        return resp.json()
+        resp = self._request("GET", req.get, url, headers=self._session_headers(session, xsrf_token=xsrf_token, origin=origin, referer=referer), params=params, timeout=self.request_timeout)
+        return self._json_response(resp, f"GET {url}")
 
     def _put_json(self, url: str, payload: Optional[Dict[str, Any]] = None, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None, origin: Optional[str] = None, referer: Optional[str] = None) -> Dict[str, Any]:
         req = session if session else requests
-        resp = req.put(url, headers=self._session_headers(session, xsrf_token=xsrf_token, origin=origin, referer=referer), json=payload, timeout=self.request_timeout)
-        if not resp.ok:
-            raise LINEOAError(f"PUT {url} failed: {resp.status_code} {resp.text}")
-        return resp.json() if resp.text else {}
+        resp = self._request("PUT", req.put, url, headers=self._session_headers(session, xsrf_token=xsrf_token, origin=origin, referer=referer), json=payload, timeout=self.request_timeout)
+        return self._json_response(resp, f"PUT {url}", allow_empty=True)
 
     def _post_json(self, url: str, payload: Optional[Dict[str, Any]] = None, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None, origin: Optional[str] = None, referer: Optional[str] = None) -> Dict[str, Any]:
         req = session if session else requests
-        resp = req.post(url, headers=self._session_headers(session, xsrf_token=xsrf_token, origin=origin, referer=referer), json=payload, timeout=self.request_timeout)
-        if not resp.ok:
-            raise LINEOAError(f"POST {url} failed: {resp.status_code} {resp.text}")
-        return resp.json() if resp.text else {}
+        resp = self._request("POST", req.post, url, headers=self._session_headers(session, xsrf_token=xsrf_token, origin=origin, referer=referer), json=payload, timeout=self.request_timeout)
+        return self._json_response(resp, f"POST {url}", allow_empty=True)
 
     def send_mention(self, bot_id: str, chat_id: str, mentionee_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -111,81 +161,62 @@ class ChatService:
         Returns:
             dict: API response
         """
+        if not os.path.isfile(file_path):
+            raise LINEOAError(f"File not found: {file_path}")
         req = session if session else requests
-        cookie_dict = {}
-        if isinstance(req, _requests.Session):
-            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
-                cookie_dict.update(req.cookies.get_dict(domain=dom))
-        if cookie_dict:
-            cookie_str = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
-        else:
-            cookie_str = ""
         url_upload = f"https://chat.line.biz/api/v1/bots/{bot_id}/messages/{chat_id}/uploadFile"
-        headers_upload = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
-            "Accept": "application/json, text/plain, */*",
-            "Origin": "https://chat.line.biz",
-            "Referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
-            "sec-ch-ua": '"Not(A:Brand";v="8", "Chromium";v="144", "Microsoft Edge";v="144"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"',
-            "Sec-Fetch-Site": "same-origin",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Dest": "empty",
-            "x-oa-chat-client-version": self.chat_client_version,
-            "Cookie": cookie_str,
-        }
+        headers_upload = self._browser_request_headers(
+            Origin="https://chat.line.biz",
+            Referer=f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
+            **{
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Dest": "empty",
+            },
+        )
         if xsrf_token:
             headers_upload["X-XSRF-TOKEN"] = xsrf_token
         with open(file_path, "rb") as f:
             files = {"file": (os.path.basename(file_path), f, "application/octet-stream")}
-            resp_upload = req.post(url_upload, headers=headers_upload, files=files, timeout=self.upload_timeout)
-        if not resp_upload.ok:
-            raise LINEOAError(f"uploadFile failed: {resp_upload.status_code} {resp_upload.text}")
-        token = resp_upload.json().get("contentMessageToken")
+            resp_upload = self._request("uploadFile", req.post, url_upload, headers=headers_upload, files=files, timeout=self.upload_timeout)
+        upload_payload = self._json_response(resp_upload, "uploadFile")
+        token = upload_payload.get("contentMessageToken")
         if not token:
             raise LINEOAError("No contentMessageToken returned")
         url_bulk = f"https://chat.line.biz/api/v1/bots/{bot_id}/chats/{chat_id}/messages/bulkSendFiles"
-        headers_bulk = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
-            "Accept": "application/json, text/plain, */*",
-            "Origin": "https://chat.line.biz",
-            "Referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
-            "sec-ch-ua": '"Not(A:Brand";v="8", "Chromium";v="144", "Microsoft Edge";v="144"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"',
-            "Sec-Fetch-Site": "same-origin",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Dest": "empty",
-            "x-oa-chat-client-version": self.chat_client_version,
-            "Cookie": cookie_str,
-            "Content-Type": "application/json",
-        }
+        headers_bulk = self._browser_request_headers(
+            Origin="https://chat.line.biz",
+            Referer=f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
+            **{
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Dest": "empty",
+                "Content-Type": "application/json",
+            },
+        )
         if xsrf_token:
             headers_bulk["x-xsrf-token"] = xsrf_token
         send_id = f"{chat_id}_{int(time.time()*1000)}_{random.randint(1000000,9999999)}"
         payload = {"items": [{"sendId": send_id, "contentMessageToken": token}]}
-        resp_bulk = req.post(url_bulk, headers=headers_bulk, json=payload, timeout=self.request_timeout)
-        if not resp_bulk.ok:
-            raise LINEOAError(f"bulkSendFiles failed: {resp_bulk.status_code} {resp_bulk.text}")
-        return resp_bulk.json()
+        resp_bulk = self._request("bulkSendFiles", req.post, url_bulk, headers=headers_bulk, json=payload, timeout=self.request_timeout)
+        return self._json_response(resp_bulk, "bulkSendFiles")
 
-    async def async_send_file(self, bot_id: str, chat_id: str, file_path: str, cookies: Optional[Dict[str,str]] = None, xsrf_token: Optional[str] = None, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
+    async def async_send_file(self, bot_id: str, chat_id: str, file_path: str, cookies: Optional[Union[Dict[str, str], str]] = None, xsrf_token: Optional[str] = None, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
         """
         Async version of send_file using aiohttp.
         """
         url_upload = f"https://chat.line.biz/api/v1/bots/{bot_id}/messages/{chat_id}/uploadFile"
-        headers_upload = {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json, text/plain, */*",
-            "Origin": "https://chat.line.biz",
-            "Referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
-            "x-oa-chat-client-version": self.chat_client_version,
-        }
+        if not os.path.isfile(file_path):
+            raise LINEOAError(f"File not found: {file_path}")
+        headers_upload = self._browser_request_headers(
+            Origin="https://chat.line.biz",
+            Referer=f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
+        )
         if xsrf_token:
             headers_upload["X-XSRF-TOKEN"] = xsrf_token
-        if cookies:
-            headers_upload["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
+        cookie_value = self._cookie_value(cookies)
+        if cookie_value:
+            headers_upload["Cookie"] = cookie_value
 
         own_session = False
         if session is None:
@@ -200,36 +231,39 @@ class ChatService:
                     filename=os.path.basename(file_path),
                     content_type="application/octet-stream",
                 )
-                async with session.post(url_upload, headers=headers_upload, data=data) as resp_upload:
-                    text = await resp_upload.text()
-                    if resp_upload.status >= 400:
-                        raise LINEOAError(f"uploadFile failed: {resp_upload.status} {text}")
-                    j = await resp_upload.json()
+                async with session.post(
+                    url_upload,
+                    headers=headers_upload,
+                    data=data,
+                    timeout=aiohttp.ClientTimeout(total=self.upload_timeout),
+                ) as resp_upload:
+                    j = await self._async_json_response(resp_upload, "uploadFile")
             token = j.get('contentMessageToken')
             if not token:
                 raise LINEOAError('No contentMessageToken returned')
 
             url_bulk = f"https://chat.line.biz/api/v1/bots/{bot_id}/chats/{chat_id}/messages/bulkSendFiles"
-            headers_bulk = {
-                "User-Agent": "Mozilla/5.0",
-                "Accept": "application/json, text/plain, */*",
-                "Origin": "https://chat.line.biz",
-                "Referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
-                "x-oa-chat-client-version": self.chat_client_version,
-                "Content-Type": "application/json",
-            }
+            headers_bulk = self._browser_request_headers(
+                Origin="https://chat.line.biz",
+                Referer=f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
+                **{"Content-Type": "application/json"},
+            )
             if xsrf_token:
                 headers_bulk["x-xsrf-token"] = xsrf_token
-            if cookies:
-                headers_bulk["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
+            if cookie_value:
+                headers_bulk["Cookie"] = cookie_value
 
             send_id = f"{chat_id}_{int(time.time()*1000)}_{random.randint(1000000,9999999)}"
             payload = {"items": [{"sendId": send_id, "contentMessageToken": token}]}
-            async with session.post(url_bulk, headers=headers_bulk, json=payload) as resp_bulk:
-                text = await resp_bulk.text()
-                if resp_bulk.status >= 400:
-                    raise LINEOAError(f"bulkSendFiles failed: {resp_bulk.status} {text}")
-                return await resp_bulk.json()
+            async with session.post(
+                url_bulk,
+                headers=headers_bulk,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=self.request_timeout),
+            ) as resp_bulk:
+                return await self._async_json_response(resp_bulk, "bulkSendFiles")
+        except (aiohttp.ClientError, TimeoutError) as error:
+            raise LINEOAError(f"async_send_file failed: {type(error).__name__}") from error
         finally:
             if own_session:
                 await session.close()
@@ -247,49 +281,42 @@ class ChatService:
             dict: List of chat members
         """
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/members?limit={limit}"
-        headers = {
-            "accept": "application/json, text/plain, */*",
+        headers = self._browser_request_headers(**{
             "accept-encoding": "gzip, deflate, br, zstd",
             "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
             "priority": "u=1, i",
             "referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
-            "sec-ch-ua": '"Not(A:Brand";v="8", "Chromium";v="144", "Microsoft Edge";v="144"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"',
             "sec-fetch-dest": "empty",
             "sec-fetch-mode": "cors",
             "sec-fetch-site": "same-origin",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
-            "x-oa-chat-client-version": self.chat_client_version
-        }
+        })
         if xsrf_token:
             headers["x-xsrf-token"] = xsrf_token
         req = session if session else requests
-        resp = req.get(url, headers=headers, timeout=self.request_timeout)
-        if not resp.ok:
-            raise LINEOAError(f"get_chat_members failed: {resp.status_code} {resp.text}")
-        return resp.json()
+        resp = self._request("get_chat_members", req.get, url, headers=headers, timeout=self.request_timeout)
+        return self._json_response(resp, "get_chat_members")
 
-    async def async_get_chat_members(self, bot_id: str, chat_id: str, limit: int = 100, cookies: Optional[Dict[str,str]] = None, xsrf_token: Optional[str] = None, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
+    async def async_get_chat_members(self, bot_id: str, chat_id: str, limit: int = 100, cookies: Optional[Union[Dict[str, str], str]] = None, xsrf_token: Optional[str] = None, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/members?limit={limit}"
-        headers = {
-            "accept": "application/json, text/plain, */*",
-            "x-oa-chat-client-version": self.chat_client_version,
-        }
+        headers = self._base_headers()
         if xsrf_token:
             headers["x-xsrf-token"] = xsrf_token
-        if cookies:
-            headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
+        cookie_value = self._cookie_value(cookies)
+        if cookie_value:
+            headers["Cookie"] = cookie_value
         own_session = False
         if session is None:
             session = aiohttp.ClientSession()
             own_session = True
         try:
-            async with session.get(url, headers=headers) as resp:
-                text = await resp.text()
-                if resp.status >= 400:
-                    raise LINEOAError(f"get_chat_members failed: {resp.status} {text}")
-                return await resp.json()
+            async with session.get(
+                url,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=self.request_timeout),
+            ) as resp:
+                return await self._async_json_response(resp, "get_chat_members")
+        except (aiohttp.ClientError, TimeoutError) as error:
+            raise LINEOAError(f"async_get_chat_members failed: {type(error).__name__}") from error
         finally:
             if own_session:
                 await session.close()
@@ -303,42 +330,38 @@ class ChatService:
             on_message: Callback for new messages
         """
         url = f"https://chat.line.biz/api/v3/bots/{bot_id}/chats/{chat_id}/events"
-        headers = {
+        headers = self._browser_request_headers(**{
             "accept": "text/event-stream",
             "accept-encoding": "gzip, deflate, br, zstd",
             "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
             "priority": "u=1, i",
             "referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
-            "sec-ch-ua": '"Not(A:Brand";v="8", "Chromium";v="144", "Microsoft Edge";v="144"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"',
             "sec-fetch-dest": "empty",
             "sec-fetch-mode": "cors",
             "sec-fetch-site": "same-origin",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
-            "x-oa-chat-client-version": self.chat_client_version
-        }
-        xsrf_token = None
+        })
         req = session if session else requests
-        if isinstance(req, _requests.Session):
-            for c in req.cookies:
-                if c.name == "XSRF-TOKEN" and "chat.line.biz" in c.domain:
-                    xsrf_token = c.value
-                    break
+        xsrf_token = get_xsrf_token(session)
         if xsrf_token:
             headers["X-XSRF-TOKEN"] = xsrf_token
-        resp = req.get(url, headers=headers, stream=True, timeout=(self.request_timeout, None))
-        if resp.status_code != 200:
-            lineoa_logger.error(f"[listen_messages] HTTP {resp.status_code}: {resp.text}")
-            return
-        for event in SSEParser.iter_events(resp.iter_lines(decode_unicode=True)):
-            if event.event not in (None, "chat"):
-                continue
-            data = event.payload
-            if on_message:
-                on_message(data)
-            else:
-                lineoa_logger.info(f"[SSE chat event] {data}")
+        with self._request("listen_messages", req.get, url, headers=headers, stream=True, timeout=(self.request_timeout, 90)) as resp:
+            with self._stream_lock:
+                self._active_stream_response = resp
+            try:
+                if resp.status_code != 200:
+                    raise LINEOAError(f"listen_messages failed: HTTP {resp.status_code}")
+                for event in SSEParser.iter_events(resp.iter_lines(decode_unicode=True)):
+                    if event.event not in (None, "chat"):
+                        continue
+                    data = event.payload
+                    if on_message:
+                        on_message(data)
+                    else:
+                        lineoa_logger.info(f"[SSE chat event] {data}")
+            finally:
+                with self._stream_lock:
+                    if self._active_stream_response is resp:
+                        self._active_stream_response = None
 
     def get_chat_messages(self, bot_id: str, chat_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None, limit: int = 50, before: Optional[str] = None, after: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -356,79 +379,62 @@ class ChatService:
         """
         url = f"https://chat.line.biz/api/v3/bots/{bot_id}/chats/{chat_id}/messages"
         params = {"limit": int(limit)}
-        if before is not None and before.isdigit():
+        if before is not None and str(before).isdigit():
             params["before"] = int(before)
-        if after is not None and after.isdigit():
+        if after is not None and str(after).isdigit():
             params["after"] = int(after)
-        headers = {
-            "accept": "application/json, text/plain, */*",
+        headers = self._browser_request_headers(**{
             "accept-encoding": "gzip, deflate, br, zstd",
             "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
             "priority": "u=1, i",
             "referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
-            "sec-ch-ua": '"Not(A:Brand";v="8", "Chromium";v="144", "Microsoft Edge";v="144"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"',
             "sec-fetch-dest": "empty",
             "sec-fetch-mode": "cors",
             "sec-fetch-site": "same-origin",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
-            "x-oa-chat-client-version": self.chat_client_version,
-        }
+        })
         req = session if session else requests
-        cookie_dict = {}
-        xsrf_cookie = None
-        if isinstance(req, _requests.Session):
-            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
-                cookie_dict.update(req.cookies.get_dict(domain=dom))
-            for c in req.cookies:
-                if c.name == "XSRF-TOKEN" and "chat.line.biz" in c.domain:
-                    xsrf_cookie = c.value
-                    break
-        if cookie_dict:
-            cookie_str = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
-            headers["cookie"] = cookie_str
+        xsrf_cookie = get_xsrf_token(session)
         if xsrf_token:
             headers["X-XSRF-TOKEN"] = xsrf_token
         elif xsrf_cookie:
             headers["X-XSRF-TOKEN"] = xsrf_cookie
         else:
-            csrf_resp = req.get("https://chat.line.biz/api/v1/csrfToken", headers=headers, timeout=self.request_timeout)
+            csrf_resp = self._request("get_csrf_token", req.get, "https://chat.line.biz/api/v1/csrfToken", headers=headers, timeout=self.request_timeout)
             if csrf_resp.ok:
-                csrf_json = csrf_resp.json()
+                csrf_json = self._json_response(csrf_resp, "get_csrf_token")
                 token = csrf_json.get("token")
                 if token:
                     headers["X-XSRF-TOKEN"] = token
-        resp = req.get(url, headers=headers, params=params, timeout=self.request_timeout)
-        if not resp.ok:
-            raise LINEOAError(f"get_chat_messages failed: {resp.status_code} {resp.text}")
-        return resp.json()
+        resp = self._request("get_chat_messages", req.get, url, headers=headers, params=params, timeout=self.request_timeout)
+        return self._json_response(resp, "get_chat_messages")
 
-    async def async_get_chat_messages(self, bot_id: str, chat_id: str, cookies: Optional[Dict[str,str]] = None, xsrf_token: Optional[str] = None, limit: int = 50, before: Optional[str] = None, after: Optional[str] = None, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
-        url = f"{self.v2_BASE_URL}/bots/{bot_id}/chats/{chat_id}/messages"
+    async def async_get_chat_messages(self, bot_id: str, chat_id: str, cookies: Optional[Union[Dict[str, str], str]] = None, xsrf_token: Optional[str] = None, limit: int = 50, before: Optional[str] = None, after: Optional[str] = None, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
+        url = f"{self.v3_BASE_URL}/bots/{bot_id}/chats/{chat_id}/messages"
         params = {"limit": int(limit)}
-        if before is not None and before.isdigit():
+        if before is not None and str(before).isdigit():
             params["before"] = int(before)
-        if after is not None and after.isdigit():
+        if after is not None and str(after).isdigit():
             params["after"] = int(after)
-        headers = {
-            "accept": "application/json, text/plain, */*",
-            "x-oa-chat-client-version": self.chat_client_version,
-        }
+        headers = self._base_headers()
         if xsrf_token:
             headers["x-xsrf-token"] = xsrf_token
-        if cookies:
-            headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
+        cookie_value = self._cookie_value(cookies)
+        if cookie_value:
+            headers["Cookie"] = cookie_value
         own_session = False
         if session is None:
             session = aiohttp.ClientSession()
             own_session = True
         try:
-            async with session.get(url, headers=headers, params=params) as resp:
-                text = await resp.text()
-                if resp.status >= 400:
-                    raise LINEOAError(f"get_chat_messages failed: {resp.status} {text}")
-                return await resp.json()
+            async with session.get(
+                url,
+                headers=headers,
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=self.request_timeout),
+            ) as resp:
+                return await self._async_json_response(resp, "get_chat_messages")
+        except (aiohttp.ClientError, TimeoutError) as error:
+            raise LINEOAError(f"async_get_chat_messages failed: {type(error).__name__}") from error
         finally:
             if own_session:
                 await session.close()
@@ -458,65 +464,38 @@ class ChatService:
         Returns:
             dict: List of chats
         """
-        url = (
-            f"https://chat.line.biz/api/v2/bots/{bot_id}/chats"
-            f"?folderType={folder_type}"
-            f"&tagIds={tag_ids}"
-            f"&autoTagIds={auto_tag_ids}"
-            f"&limit={limit}"
-            f"&prioritizePinnedChat={'true' if prioritize_pinned_chat else 'false'}"
-        )
-        headers = {
-            "accept": "application/json, text/plain, */*",
+        url = f"https://chat.line.biz/api/v2/bots/{bot_id}/chats"
+        params = {
+            "folderType": folder_type,
+            "tagIds": tag_ids,
+            "autoTagIds": auto_tag_ids,
+            "limit": limit,
+            "prioritizePinnedChat": str(prioritize_pinned_chat).lower(),
+        }
+        headers = self._browser_request_headers(**{
             "accept-encoding": "gzip, deflate, br, zstd",
             "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
             "priority": "u=1, i",
             "referer": f"https://chat.line.biz/{bot_id}",
-            "sec-ch-ua": '"Not(A:Brand";v="8", "Chromium";v="144", "Microsoft Edge";v="144"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"',
             "sec-fetch-dest": "empty",
             "sec-fetch-mode": "cors",
             "sec-fetch-site": "same-origin",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
-            "x-oa-chat-client-version": self.chat_client_version,
-        }
+        })
         req = session if session else requests
-        cookie_dict = {}
-        xsrf_cookie = None
-        if isinstance(req, _requests.Session):
-            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
-                try:
-                    cookie_dict.update(req.cookies.get_dict(domain=dom))
-                except Exception:
-                    pass
-            for c in req.cookies:
-                domain = getattr(c, 'domain', '')
-                name = getattr(c, 'name', None)
-                if name == "XSRF-TOKEN" and "chat.line.biz" in domain:
-                    xsrf_cookie = c.value
-                    break
-        if cookie_dict:
-            cookie_str = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
-            headers["cookie"] = cookie_str
+        xsrf_cookie = get_xsrf_token(session)
         if xsrf_token:
             headers["x-xsrf-token"] = xsrf_token
         elif xsrf_cookie:
             headers["x-xsrf-token"] = xsrf_cookie
         else:
-            try:
-                csrf_resp = req.get("https://chat.line.biz/api/v1/csrfToken", headers=headers, timeout=self.request_timeout)
-                if csrf_resp.ok:
-                    csrf_json = csrf_resp.json()
-                    token = csrf_json.get("token")
-                    if token:
-                        headers["x-xsrf-token"] = token
-            except Exception:
-                pass
-        resp = req.get(url, headers=headers, timeout=self.request_timeout)
-        if not resp.ok:
-            raise LINEOAError(f"get_chats failed: {resp.status_code} {resp.text}")
-        return resp.json()
+            csrf_resp = self._request("get_csrf_token", req.get, "https://chat.line.biz/api/v1/csrfToken", headers=headers, timeout=self.request_timeout)
+            csrf_json = self._json_response(csrf_resp, "get_csrf_token")
+            token = csrf_json.get("token")
+            if not isinstance(token, str) or not token:
+                raise LINEOAError("get_csrf_token failed: response did not contain a token")
+            headers["x-xsrf-token"] = token
+        resp = self._request("get_chats", req.get, url, headers=headers, params=params, timeout=self.request_timeout)
+        return self._json_response(resp, "get_chats")
 
     def get_me(self, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -566,18 +545,12 @@ class ChatService:
         """
         url = "https://chat.line.biz/api/v1/bots"
         params = {"limit": limit, "noFilter": str(no_filter).lower()}
-        browser_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-            "Accept": "application/json, text/plain, */*",
-            "x-oa-chat-client-version": self.chat_client_version,
-        }
+        browser_headers = self._base_headers()
         if xsrf_token:
             browser_headers["x-xsrf-token"] = xsrf_token
         req = session if session else requests
-        resp = req.get(url, headers=browser_headers, params=params, timeout=self.request_timeout)
-        if not resp.ok:
-            raise LINEOAError(f"get_bot_accounts failed: {resp.status_code} {resp.text}")
-        return resp.json()
+        resp = self._request("get_bot_accounts", req.get, url, headers=browser_headers, params=params, timeout=self.request_timeout)
+        return self._json_response(resp, "get_bot_accounts")
 
     def get_pinned_messages(self, bot_id: str, chat_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -642,46 +615,85 @@ class ChatService:
     def get_content_preview(self, bot_id: str, content_hash: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> bytes:
         url = f"https://chat-content.line.biz/bot/{bot_id}/{content_hash}/preview"
         req = session if session else requests
-        resp = req.get(
+        resp = self._request(
+            "get_content_preview",
+            req.get,
             url,
-            headers={
+            headers=self._browser_request_headers(**{
                 "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
                 "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-                "User-Agent": "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36",
-            },
+            }),
             timeout=self.request_timeout,
         )
         if not resp.ok:
-            raise LINEOAError(f"get_content_preview failed: {resp.status_code} {resp.text}")
+            raise LINEOAError(f"get_content_preview failed: HTTP {resp.status_code}")
         return resp.content
 
     def get_sticker_image(self, sticker_id: str, session: Optional[requests.Session] = None) -> bytes:
         url = f"https://stickershop.line-scdn.net/stickershop/v1/sticker/{sticker_id}/android/sticker.png"
         req = session if session else requests
-        resp = req.get(
+        resp = self._request(
+            "get_sticker_image",
+            req.get,
             url,
-            headers={
+            headers=self._browser_request_headers(**{
                 "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
                 "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-                "User-Agent": "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36",
-            },
+            }),
             timeout=self.request_timeout,
         )
         if not resp.ok:
-            raise LINEOAError(f"get_sticker_image failed: {resp.status_code} {resp.text}")
+            raise LINEOAError(f"get_sticker_image failed: HTTP {resp.status_code}")
         return resp.content
 
-    def save_sticker_image(self, sticker_id: str, file_path: str, session: Optional[requests.Session] = None) -> str:
-        data = self.get_sticker_image(sticker_id=sticker_id, session=session)
-        with open(file_path, "wb") as f:
-            f.write(data)
+    def _download_to_file(self, url: str, file_path: str, session: Optional[requests.Session], action: str) -> str:
+        req = session if session else requests
+        target_path = os.path.abspath(file_path)
+        parent = os.path.dirname(target_path)
+        descriptor, temporary_path = tempfile.mkstemp(
+            dir=parent,
+            prefix=f".{os.path.basename(file_path)}.",
+            suffix=".tmp",
+        )
+        try:
+            with self._request(
+                action,
+                req.get,
+                url,
+                headers=self._browser_request_headers(**{
+                    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+                }),
+                stream=True,
+                timeout=self.request_timeout,
+            ) as response:
+                if not response.ok:
+                    raise LINEOAError(f"{action} failed: HTTP {response.status_code}")
+                with os.fdopen(descriptor, "wb") as file:
+                    descriptor = -1
+                    for chunk in response.iter_content(chunk_size=64 * 1024):
+                        if chunk:
+                            file.write(chunk)
+                    file.flush()
+                    os.fsync(file.fileno())
+            os.replace(temporary_path, target_path)
+        except Exception:
+            if descriptor >= 0:
+                os.close(descriptor)
+            try:
+                os.unlink(temporary_path)
+            except OSError:
+                pass
+            raise
         return file_path
 
+    def save_sticker_image(self, sticker_id: str, file_path: str, session: Optional[requests.Session] = None) -> str:
+        url = f"https://stickershop.line-scdn.net/stickershop/v1/sticker/{sticker_id}/android/sticker.png"
+        return self._download_to_file(url, file_path, session, "save_sticker_image")
+
     def save_content_preview(self, bot_id: str, content_hash: str, file_path: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> str:
-        data = self.get_content_preview(bot_id=bot_id, content_hash=content_hash, session=session, xsrf_token=xsrf_token)
-        with open(file_path, "wb") as f:
-            f.write(data)
-        return file_path
+        url = f"https://chat-content.line.biz/bot/{bot_id}/{content_hash}/preview"
+        return self._download_to_file(url, file_path, session, "save_content_preview")
 
     def set_typing(self, bot_id: str, chat_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -732,27 +744,25 @@ class ChatService:
             dict: API response
         """
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/streamingApiToken"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
-            "Accept": "application/json, text/plain, */*",
-            "Origin": "https://chat.line.biz",
-            "Referer": f"https://chat.line.biz/{bot_id}/chat/",
-            "x-oa-chat-client-version": self.chat_client_version,
-        }
+        headers = self._browser_request_headers(
+            Origin="https://chat.line.biz",
+            Referer=f"https://chat.line.biz/{bot_id}/chat/",
+        )
         if xsrf_token:
             headers["x-xsrf-token"] = xsrf_token
         req = session if session else requests
         try:
-            response = req.post(url, headers=headers, data="", timeout=self.request_timeout)
-            self._handle_response(response)
-            payload = response.json()
+            response = self._request("get_streaming_api_token", req.post, url, headers=headers, data="", timeout=self.request_timeout)
+            payload = self._json_response(response, "get_streaming_api_token")
             if "streamingApiBaseUrl" not in payload:
                 payload["streamingApiBaseUrl"] = "https://chat-streaming-api.line.biz"
             if "streamingApiVersion" not in payload:
                 payload["streamingApiVersion"] = "v2"
             return payload
-        except Exception as e:
-            raise LINEOAError(f"get_streaming_api_token: {e}")
+        except LINEOAError:
+            raise
+        except requests.RequestException as error:
+            raise LINEOAError(f"get_streaming_api_token failed: {error}") from error
 
     def stream_events(self, streaming_api_token: str, device_type: str = "", client_type: str = "PC", ping_secs: int = 60, last_event_id: Optional[str] = None, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None, max_stream_seconds: float = 82800, base_url: str = "https://chat-streaming-api.line.biz", version: str = "v2") -> Generator[Dict[str, Any], None, None]:
         """
@@ -768,7 +778,21 @@ class ChatService:
         Yields:
             dict: Event data
         """
-        base_url = f"{base_url}/api/{version}/sse"
+        parsed_base_url = urllib.parse.urlparse(base_url)
+        if (
+            parsed_base_url.scheme != "https"
+            or parsed_base_url.hostname != "chat-streaming-api.line.biz"
+            or parsed_base_url.port is not None
+            or parsed_base_url.username is not None
+            or parsed_base_url.password is not None
+            or parsed_base_url.path not in {"", "/"}
+            or parsed_base_url.query
+            or parsed_base_url.fragment
+        ):
+            raise LINEOAError("Invalid LINE streaming API base URL")
+        if not isinstance(version, str) or not version.startswith("v") or not version[1:].isdigit():
+            raise LINEOAError("Invalid LINE streaming API version")
+        stream_url = f"https://chat-streaming-api.line.biz/api/{version}/sse"
         params = {
             "token": streaming_api_token,
             "deviceType": device_type,
@@ -777,7 +801,7 @@ class ChatService:
         }
         if last_event_id:
             params["lastEventId"] = last_event_id
-        headers = {
+        headers = self._browser_request_headers(**{
             "accept": "text/event-stream",
             "accept-encoding": "gzip, deflate, br, zstd",
             "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
@@ -785,83 +809,80 @@ class ChatService:
             "origin": "https://chat.line.biz",
             "referer": "https://chat.line.biz/",
             "priority": "u=1, i",
-            "sec-ch-ua": '"Not(A:Brand";v="8", "Chromium";v="144", "Microsoft Edge";v="144"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"',
             "sec-fetch-dest": "empty",
             "sec-fetch-mode": "cors",
             "sec-fetch-site": "same-site",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
-        }
+        })
         if xsrf_token:
             headers["X-XSRF-TOKEN"] = xsrf_token
         if session:
-            cookie_dict = {}
-            for c in session.cookies:
-                if "chat.line.biz" in c.domain:
-                    cookie_dict[c.name] = c.value
-            for c in session.cookies:
-                if c.name in ["__Host-chat-ses", "chat-device-group", "XSRF-TOKEN"]:
-                    cookie_dict[c.name] = str(c.value)
-            cookie_str = "; ".join([f"{k}={v}" for k, v in cookie_dict.items()])
-            headers["cookie"] = cookie_str
+            stream_cookies = get_stream_cookie_dict(session)
+            if stream_cookies:
+                headers["cookie"] = cookie_header(stream_cookies)
             req = session
         else:
             req = requests
         started_at = time.monotonic()
         stream_timeout = (self.request_timeout, max(90, ping_secs + 30))
-        with req.get(base_url, headers=headers, params=params, stream=True, timeout=stream_timeout) as resp:
-            if not resp.ok:
-                raise LINEOAError(f"HTTP {resp.status_code}: {resp.text}")
-            event_id = None
-            event_type = None
-            data_lines = []
-            for line in resp.iter_lines(decode_unicode=True):
-                if time.monotonic() - started_at >= max_stream_seconds:
-                    break
-                if line is None:
-                    continue
-                line = line.rstrip("\r\n")
-                if line.startswith(":"):
-                    continue
-                if not line:
-                    if data_lines:
-                        data = "\n".join(data_lines)
-                        try:
-                            payload = json.loads(data)
-                        except Exception:
-                            payload = data
-                        result = {
-                            "id": event_id,
-                            "type": event_type,
-                            "payload": payload,
-                            "time": datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                        }
-                        yield result
-                        data_lines = []
-                        event_id = None
-                        event_type = None
-                    continue
-                if line.startswith("id:"):
-                    event_id = line[3:].strip()
-                elif line.startswith("event:"):
-                    event_type = line[6:].strip()
-                elif line.startswith("data:"):
-                    data_lines.append(line[5:].strip())
-                else:
-                    continue
-            if data_lines:
-                data = "\n".join(data_lines)
-                try:
-                    payload = json.loads(data)
-                except Exception:
-                    payload = data
-                yield {
-                    "id": event_id,
-                    "type": event_type,
-                    "payload": payload,
-                    "time": datetime.now().strftime("%H:%M:%S.%f")[:-3],
-                }
+        with self._request("stream_events", req.get, stream_url, headers=headers, params=params, stream=True, timeout=stream_timeout) as resp:
+            with self._stream_lock:
+                self._active_stream_response = resp
+            try:
+                if not resp.ok:
+                    raise LINEOAError(f"stream_events failed: HTTP {resp.status_code}")
+                event_id = None
+                event_type = None
+                data_lines = []
+                for line in resp.iter_lines(decode_unicode=True):
+                    if time.monotonic() - started_at >= max_stream_seconds:
+                        break
+                    if line is None:
+                        continue
+                    line = line.rstrip("\r\n")
+                    if line.startswith(":"):
+                        continue
+                    if not line:
+                        if data_lines:
+                            data = "\n".join(data_lines)
+                            try:
+                                payload = json.loads(data)
+                            except json.JSONDecodeError:
+                                payload = data
+                            result = {
+                                "id": event_id,
+                                "type": event_type,
+                                "payload": payload,
+                                "time": datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                            }
+                            yield result
+                            data_lines = []
+                            event_id = None
+                            event_type = None
+                        continue
+                    if line.startswith("id:"):
+                        event_id = line[3:].strip()
+                    elif line.startswith("event:"):
+                        event_type = line[6:].strip()
+                    elif line.startswith("data:"):
+                        data_lines.append(line[5:].strip())
+                    else:
+                        continue
+                if data_lines:
+                    data = "\n".join(data_lines)
+                    try:
+                        payload = json.loads(data)
+                    except json.JSONDecodeError:
+                        payload = data
+                    yield {
+                        "id": event_id,
+                        "type": event_type,
+                        "payload": payload,
+                        "time": datetime.now().strftime("%H:%M:%S.%f")[:-3],
+                    }
+            finally:
+                with self._stream_lock:
+                    if self._active_stream_response is resp:
+                        self._active_stream_response = None
 
     def send_message(self, bot_id: str, chat_id: str, message: Dict[str, Any], session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -876,76 +897,60 @@ class ChatService:
             dict: Always empty
         """
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/messages/send"
-        browser_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-            "sec-ch-ua": '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"',
-            "Referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
-            "Origin": "https://chat.line.biz",
-            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-            "Sec-Fetch-Site": "same-origin",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Dest": "empty",
-            "x-oa-chat-client-version": self.chat_client_version,
-            "Content-Type": "application/json",
-        }
+        browser_headers = self._browser_request_headers(
+            Referer=f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
+            Origin="https://chat.line.biz",
+            **{
+                "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Dest": "empty",
+                "Content-Type": "application/json",
+            },
+        )
         if xsrf_token:
             browser_headers["x-xsrf-token"] = xsrf_token
         req = session if session else requests
-        cookie_dict = {}
-        if isinstance(req, _requests.Session):
-            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
-                cookie_dict.update(req.cookies.get_dict(domain=dom))
-        if cookie_dict:
-            cookie_str = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
-            browser_headers["Cookie"] = cookie_str
-        browser_headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.5735.199 Safari/537.36"
-        browser_headers["sec-ch-ua"] = '"Not.A/Brand";v="8", "Chromium";v="114", "Google Chrome";v="114"'
-        browser_headers["sec-ch-ua-mobile"] = "?0"
-        browser_headers["sec-ch-ua-platform"] = '"Windows"'
-        browser_headers["Accept-Language"] = "ja,en-US;q=0.9,en;q=0.8"
-        browser_headers["Sec-Fetch-Site"] = "same-origin"
-        browser_headers["Sec-Fetch-Mode"] = "cors"
-        browser_headers["Sec-Fetch-Dest"] = "empty"
-        browser_headers["x-oa-chat-client-version"] = "20240513144702"
-        browser_headers["Content-Type"] = "application/json"
-        browser_headers["Referer"] = f"https://chat.line.biz/{bot_id}/chat/{chat_id}"
-        browser_headers["Origin"] = "https://chat.line.biz"
-        response = req.post(url, headers=browser_headers, json=message, timeout=self.request_timeout)
+        response = self._request("send_message", req.post, url, headers=browser_headers, json=message, timeout=self.request_timeout)
         if not response.ok:
-            raise LINEOAError(f"HTTP {response.status_code}: {response.text}")
+            raise LINEOAError(f"send_message failed: HTTP {response.status_code}")
         return {}
 
-    async def async_send_message(self, bot_id: str, chat_id: str, message: Dict[str, Any], cookies: Optional[Dict[str, str]] = None, xsrf_token: Optional[str] = None, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
+    async def async_send_message(self, bot_id: str, chat_id: str, message: Dict[str, Any], cookies: Optional[Union[Dict[str, str], str]] = None, xsrf_token: Optional[str] = None, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
         """
         Async version of send_message using aiohttp.
         cookies: dict of cookie name->value to send in Cookie header.
         """
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/messages/send"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            "Referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
-            "Origin": "https://chat.line.biz",
-            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-            "x-oa-chat-client-version": self.chat_client_version,
-            "Content-Type": "application/json",
-        }
+        headers = self._browser_request_headers(
+            Referer=f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
+            Origin="https://chat.line.biz",
+            **{
+                "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+                "Content-Type": "application/json",
+            },
+        )
         if xsrf_token:
             headers["x-xsrf-token"] = xsrf_token
-        if cookies:
-            cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
-            headers["Cookie"] = cookie_str
+        cookie_value = self._cookie_value(cookies)
+        if cookie_value:
+            headers["Cookie"] = cookie_value
 
         own_session = False
         if session is None:
             session = aiohttp.ClientSession()
             own_session = True
         try:
-            async with session.post(url, headers=headers, json=message) as resp:
-                text = await resp.text()
+            async with session.post(
+                url,
+                headers=headers,
+                json=message,
+                timeout=aiohttp.ClientTimeout(total=self.request_timeout),
+            ) as resp:
                 if resp.status >= 400:
-                    raise LINEOAError(f"HTTP {resp.status}: {text}")
+                    raise LINEOAError(f"async_send_message failed: HTTP {resp.status}")
+        except (aiohttp.ClientError, TimeoutError) as error:
+            raise LINEOAError(f"async_send_message failed: {type(error).__name__}") from error
         finally:
             if own_session:
                 await session.close()
@@ -978,33 +983,23 @@ class ChatService:
             "cardTypeMessageId": card_type_message_id,
             "sendId": send_id,
         }
-        browser_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.5735.199 Safari/537.36",
-            "sec-ch-ua": '"Not.A/Brand";v="8", "Chromium";v="114", "Google Chrome";v="114"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"',
-            "Accept": "application/json, text/plain, */*",
-            "Content-Type": "application/json",
-            "Origin": "https://chat.line.biz",
-            "Referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
-            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-            "Sec-Fetch-Site": "same-origin",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Dest": "empty",
-            "x-oa-chat-client-version": self.chat_client_version,
-        }
+        browser_headers = self._browser_request_headers(
+            Origin="https://chat.line.biz",
+            Referer=f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
+            **{
+                "Content-Type": "application/json",
+                "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Dest": "empty",
+            },
+        )
         if xsrf_token:
             browser_headers["x-xsrf-token"] = xsrf_token
         req = session if session else requests
-        cookie_dict = {}
-        if isinstance(req, _requests.Session):
-            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
-                cookie_dict.update(req.cookies.get_dict(domain=dom))
-        if cookie_dict:
-            browser_headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
-        response = req.post(url, headers=browser_headers, json=payload, timeout=self.request_timeout)
+        response = self._request("send_flex_message", req.post, url, headers=browser_headers, json=payload, timeout=self.request_timeout)
         if not response.ok:
-            raise LINEOAError(f"send_flex_message failed: HTTP {response.status_code}: {response.text}")
+            raise LINEOAError(f"send_flex_message failed: HTTP {response.status_code}")
         return {}
 
     def get_flex_json(
@@ -1032,26 +1027,15 @@ class ChatService:
             timestamp = int(time.time() * 1000)
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/messages/flexJson"
         params = {"timestamp": timestamp, "messageId": message_id}
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.5735.199 Safari/537.36",
-            "Accept": "application/json, text/plain, */*",
-            "Origin": "https://chat.line.biz",
-            "Referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
-            "x-oa-chat-client-version": self.chat_client_version,
-        }
+        headers = self._browser_request_headers(
+            Origin="https://chat.line.biz",
+            Referer=f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
+        )
         if xsrf_token:
             headers["x-xsrf-token"] = xsrf_token
         req = session if session else requests
-        cookie_dict = {}
-        if isinstance(req, _requests.Session):
-            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
-                cookie_dict.update(req.cookies.get_dict(domain=dom))
-        if cookie_dict:
-            headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
-        response = req.get(url, headers=headers, params=params, timeout=self.request_timeout)
-        if not response.ok:
-            raise LINEOAError(f"get_flex_json failed: HTTP {response.status_code}: {response.text}")
-        return response.json()
+        response = self._request("get_flex_json", req.get, url, headers=headers, params=params, timeout=self.request_timeout)
+        return self._json_response(response, "get_flex_json")
 
     def mark_as_read(
         self,
@@ -1083,51 +1067,33 @@ class ChatService:
                 "timestamp": timestamp,
             }
         }
-        browser_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.5735.199 Safari/537.36",
-            "sec-ch-ua": '"Not.A/Brand";v="8", "Chromium";v="114", "Google Chrome";v="114"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"',
-            "Accept": "application/json, text/plain, */*",
-            "Content-Type": "application/json",
-            "Origin": "https://chat.line.biz",
-            "Referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
-            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-            "Sec-Fetch-Site": "same-origin",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Dest": "empty",
-            "x-oa-chat-client-version": self.chat_client_version,
-        }
+        browser_headers = self._browser_request_headers(
+            Origin="https://chat.line.biz",
+            Referer=f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
+            **{
+                "Content-Type": "application/json",
+                "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Dest": "empty",
+            },
+        )
         if xsrf_token:
             browser_headers["x-xsrf-token"] = xsrf_token
         req = session if session else requests
-        cookie_dict = {}
-        if isinstance(req, _requests.Session):
-            for dom in ["chat.line.biz", ".chat.line.biz", "manager.line.biz", ".line.biz"]:
-                cookie_dict.update(req.cookies.get_dict(domain=dom))
-        if cookie_dict:
-            browser_headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
-        response = req.put(url, headers=browser_headers, json=payload, timeout=self.request_timeout)
+        response = self._request("mark_as_read", req.put, url, headers=browser_headers, json=payload, timeout=self.request_timeout)
         if not response.ok:
-            raise LINEOAError(f"mark_as_read failed: HTTP {response.status_code}: {response.text}")
+            raise LINEOAError(f"mark_as_read failed: HTTP {response.status_code}")
         return {}
 
 
     def _manager_headers(self, session, at_id: str, xsrf_token=None) -> dict:
         """manager.line.biz 用ヘッダー生成"""
-        import requests as _req
-        cookie_dict = {}
-        if isinstance(session, _req.Session):
-            for dom in ["manager.line.biz", ".line.biz", ".manager.line.biz", "chat.line.biz", ".chat.line.biz"]:
-                cookie_dict.update(session.cookies.get_dict(domain=dom))
-        h = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.5735.199 Safari/537.36",
-            "Accept": "application/json, text/plain, */*",
-            "Content-Type": "application/json",
-            "Origin": "https://manager.line.biz",
-            "Referer": "https://manager.line.biz/",
-            "Cookie": "; ".join(f"{k}={v}" for k, v in cookie_dict.items()),
-        }
+        h = self._browser_request_headers(
+            Origin="https://manager.line.biz",
+            Referer="https://manager.line.biz/",
+            **{"Content-Type": "application/json"},
+        )
         if xsrf_token:
             h["x-xsrf-token"] = xsrf_token
         return h
@@ -1211,12 +1177,11 @@ class ChatService:
         }
         req = session if session else requests
         headers = self._manager_headers(session, at_id, xsrf_token)
-        response = req.post(url, headers=headers, json=payload, timeout=self.request_timeout)
-        if not response.ok:
-            raise LINEOAError(f"create_card_type_message failed: HTTP {response.status_code}: {response.text}")
-        card_id = response.json().get("id")
+        response = self._request("create_card_type_message", req.post, url, headers=headers, json=payload, timeout=self.request_timeout)
+        response_payload = self._json_response(response, "create_card_type_message")
+        card_id = response_payload.get("id")
         if not card_id:
-            raise LINEOAError(f"create_card_type_message: no id in response: {response.text}")
+            raise LINEOAError("create_card_type_message failed: response did not contain an id")
         return int(card_id)
 
     def delete_card_type_message(
@@ -1236,9 +1201,9 @@ class ChatService:
         url = f"https://manager.line.biz/api/bots/@{at_id}/cardTypeMessages/{card_id}"
         req = session if session else requests
         headers = self._manager_headers(session, at_id, xsrf_token)
-        response = req.delete(url, headers=headers, timeout=self.request_timeout)
+        response = self._request("delete_card_type_message", req.delete, url, headers=headers, timeout=self.request_timeout)
         if not response.ok:
-            raise LINEOAError(f"delete_card_type_message failed: HTTP {response.status_code}: {response.text}")
+            raise LINEOAError(f"delete_card_type_message failed: HTTP {response.status_code}")
 
     def create_and_send_flex(
         self,
@@ -1304,4 +1269,4 @@ class ChatService:
 
     def _handle_response(self, response: requests.Response) -> None:
         if not response.ok:
-            raise LINEOAError(f"HTTP {response.status_code}: {response.text}")
+            raise LINEOAError(f"HTTP {response.status_code}")

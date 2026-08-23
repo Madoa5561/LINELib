@@ -8,10 +8,16 @@ class RateLimitConfig:
     enabled: bool = True
 
     def __post_init__(self):
-        if int(self.limit) < 1:
+        limit = int(self.limit)
+        window = float(self.window)
+        if limit < 1:
             raise ValueError("rate_limit must be greater than 0")
-        if float(self.window) <= 0:
+        if window <= 0:
             raise ValueError("rate_limit_window must be greater than 0")
+        if not isinstance(self.enabled, bool):
+            raise ValueError("rate_limit_enabled must be a boolean")
+        object.__setattr__(self, "limit", limit)
+        object.__setattr__(self, "window", window)
 
 
 @dataclass(frozen=True)

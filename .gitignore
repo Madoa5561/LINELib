@@ -10,6 +10,7 @@ dist/
 *.egg-info/
 
 lineoa-storage.json
+*.json.lock
 id_map.json
 outputs/
 downloaded/

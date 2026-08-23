@@ -13,6 +13,14 @@ def make_bot(normalized):
     return bot
 
 
+class StubbornThread:
+    def is_alive(self):
+        return True
+
+    def join(self, timeout=None):
+        return None
+
+
 class LineBotTests(unittest.TestCase):
     def test_interactive_login_options_are_forwarded(self):
         otp_callback = Mock(return_value="123456")
@@ -105,6 +113,45 @@ class LineBotTests(unittest.TestCase):
 
         self.assertFalse(bot.running)
         self.assertTrue(bot._stop_event.is_set())
+        bot._lib._close_stream.assert_called_once_with()
+
+    def test_stop_keeps_running_true_when_thread_did_not_exit(self):
+        bot = make_bot({"kind": "unknown"})
+        bot.running = True
+        bot._stop_event = threading.Event()
+        bot._listen_thread = StubbornThread()
+
+        bot.stop()
+
+        self.assertTrue(bot.running)
+        bot._lib._close_stream.assert_called_once_with()
+
+    def test_last_event_id_is_scoped_per_bot(self):
+        bot = make_bot({"kind": "unknown"})
+        bot._stop_event = threading.Event()
+        bot._last_event_ids = {}
+        bot.device_type = ""
+        bot.client_type = "PC"
+        bot.ping_secs = 60
+        bot.reconnect_interval = 0
+        bot.max_reconnects = None
+        bot.listen_config = Mock(max_stream_seconds=60)
+        calls = []
+
+        def listen(**kwargs):
+            calls.append((kwargs["bot_id"], kwargs["last_event_id"]))
+            bot._stop_event.set()
+            return f"{kwargs['bot_id']}-last"
+
+        bot._lib.get_streaming_api_token_and_listen_stream_events.side_effect = listen
+
+        bot._polling_loop("UbotA")
+        bot._stop_event.clear()
+        bot._polling_loop("UbotB")
+
+        self.assertEqual([("UbotA", None), ("UbotB", None)], calls)
+        self.assertEqual("UbotA-last", bot._last_event_ids["UbotA"])
+        self.assertEqual("UbotB-last", bot._last_event_ids["UbotB"])
 
 
 if __name__ == "__main__":

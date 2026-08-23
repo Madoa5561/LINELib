@@ -1,5 +1,4 @@
 import json
-import os
 import re
 import time
 import urllib.parse
@@ -8,8 +7,16 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
 
+from .browser_profile import (
+	WINDOWS_CHROME_SEC_CH_UA,
+	WINDOWS_CHROME_USER_AGENT,
+	WINDOWS_EDGE_SEC_CH_UA,
+	WINDOWS_EDGE_USER_AGENT,
+	browser_headers_for_channel,
+)
 from .exceptions import InteractiveLoginRequired, LINEOAError
 from .logger import lineoa_logger
+from .storage import read_json, update_json
 
 
 class _LoginConfigParser(HTMLParser):
@@ -40,10 +47,10 @@ class AuthService:
 	EMAIL_VERIFICATION_VERIFY_URL = "https://account.line.biz/api/verification/verify"
 	EMAIL_VERIFICATION_RESEND_URL = "https://account.line.biz/api/verification/resend"
 	ALLOWED_LOGIN_HOSTS = {"account.line.biz", "manager.line.biz", "chat.line.biz"}
-	WINDOWS_CHROME_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
-	WINDOWS_EDGE_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0"
-	WINDOWS_CHROME_SEC_CH_UA = '"Not=A?Brand";v="99", "Google Chrome";v="151", "Chromium";v="151"'
-	WINDOWS_EDGE_SEC_CH_UA = '"Not=A?Brand";v="99", "Microsoft Edge";v="151", "Chromium";v="151"'
+	WINDOWS_CHROME_USER_AGENT = WINDOWS_CHROME_USER_AGENT
+	WINDOWS_EDGE_USER_AGENT = WINDOWS_EDGE_USER_AGENT
+	WINDOWS_CHROME_SEC_CH_UA = WINDOWS_CHROME_SEC_CH_UA
+	WINDOWS_EDGE_SEC_CH_UA = WINDOWS_EDGE_SEC_CH_UA
 
 	def __init__(self, channel_id: Optional[str] = None, channel_secret: Optional[str] = None, access_token: Optional[str] = None, cookie_store_path: Optional[str] = None, request_timeout: float = 30):
 		self.channel_id = channel_id
@@ -54,24 +61,9 @@ class AuthService:
 
 	@classmethod
 	def _browser_headers_for_channel(cls, browser_channel: str) -> Dict[str, str]:
-		if browser_channel.startswith("msedge"):
-			user_agent = cls.WINDOWS_EDGE_USER_AGENT
-			sec_ch_ua = cls.WINDOWS_EDGE_SEC_CH_UA
-		elif browser_channel.startswith("chrome"):
-			user_agent = cls.WINDOWS_CHROME_USER_AGENT
-			sec_ch_ua = cls.WINDOWS_CHROME_SEC_CH_UA
-		else:
-			raise LINEOAError(
-				"browser_channel must be a Google Chrome or Microsoft Edge channel."
-			)
-		return {
-			"User-Agent": user_agent,
-			"sec-ch-ua": sec_ch_ua,
-			"sec-ch-ua-mobile": "?0",
-			"sec-ch-ua-platform": '"Windows"',
-		}
+		return browser_headers_for_channel(browser_channel)
 
-	def get_uid_map_from_at_ids(self, at_id_list: List[str], chat_service: Any) -> Dict[str, str]:
+	def get_uid_map_from_at_ids(self, at_id_list: List[str], chat_service: Any, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, str]:
 		"""
 		Get a map from @ID list to U-ID (internal ID)
 		:param at_id_list: ['@xxxx', ...]
@@ -79,29 +71,30 @@ class AuthService:
 		:return: dict {@id: u_id}
 		 """
 		uid_map = {}
-		try:
-			bot_accounts = chat_service.get_bot_accounts()
-			for bot in bot_accounts.get('list', []):
-				at_id = bot.get('basicSearchId')
-				u_id = bot.get('botId')
-				if at_id and u_id and at_id in at_id_list:
-					uid_map[at_id] = u_id
-		except Exception as e:
-			LINEOAError(f"Failed to get UID map from @IDs: {e}")
+		bot_accounts = chat_service.get_bot_accounts(session=session, xsrf_token=xsrf_token)
+		for bot in bot_accounts.get('list', []):
+			at_id = bot.get('basicSearchId')
+			u_id = bot.get('botId')
+			if at_id and u_id and at_id in at_id_list:
+				uid_map[at_id] = u_id
 		return uid_map
 
 	def _load_cookie_storage(self) -> Optional[Dict[str, Any]]:
-		if not self.cookie_store_path or not os.path.exists(self.cookie_store_path):
+		if not self.cookie_store_path:
 			return None
-		if os.path.getsize(self.cookie_store_path) == 0:
-			raise LINEOAError("Cookie storage load error: cookie file is empty.")
 		try:
-			with open(self.cookie_store_path, "r", encoding="utf-8") as file:
-				data = json.load(file)
-		except (OSError, json.JSONDecodeError) as error:
+			data = read_json(self.cookie_store_path, missing={})
+		except (OSError, ValueError) as error:
 			raise LINEOAError(f"Cookie storage load error: {error}") from error
-		if not isinstance(data, dict) or not isinstance(data.get("cookies"), list):
+		if not data:
+			return None
+		cookies = data.get("cookies")
+		if cookies is None:
+			return None
+		if not isinstance(cookies, list):
 			raise LINEOAError("Cookie storage load error: cookies must be a list.")
+		if not cookies:
+			return None
 		return data
 
 	def _session_from_storage(self, data: Dict[str, Any], browser_channel: str = "chrome") -> requests.Session:
@@ -142,9 +135,12 @@ class AuthService:
 				item["secure"] = True
 			cookies.append(item)
 		try:
-			with open(self.cookie_store_path, "w", encoding="utf-8") as file:
-				json.dump({"user_name": user_name, "cookies": cookies}, file, ensure_ascii=False, indent=2)
-		except OSError as error:
+			def merge_cookie_data(data: Dict[str, Any]) -> None:
+				data["user_name"] = user_name
+				data["cookies"] = cookies
+
+			update_json(self.cookie_store_path, merge_cookie_data, missing={})
+		except (OSError, ValueError) as error:
 			raise LINEOAError(f"Cookie storage save error: {error}") from error
 
 	def _get_login_config(self, html: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -242,13 +238,17 @@ class AuthService:
 
 		session = requests.Session()
 		session.headers.update(self._browser_headers_for_channel(browser_channel))
+		if cookies:
+			for name, value in cookies.items():
+				session.cookies.set(name, value, domain="account.line.biz", path="/")
 		login_url, page_xsrf_token, _ = self._start_login(session)
+		account_xsrf_token = xsrf_token or page_xsrf_token
 		login_response = self.login_with_email(
 			email=email,
 			password=password,
 			recaptcha_response=recaptcha_response,
 			stay_logged_in=stay_logged_in,
-			xsrf_token=page_xsrf_token,
+			xsrf_token=account_xsrf_token,
 			session=session,
 			referer=login_url,
 		)
@@ -274,7 +274,7 @@ class AuthService:
 			verification_response = self.verify_email_otp(
 				session=session,
 				code=verification_code,
-				xsrf_token=page_xsrf_token,
+				xsrf_token=account_xsrf_token,
 				referer=redirect_response.url,
 			)
 			verification_status = verification_response.get("status")
@@ -623,7 +623,8 @@ class AuthService:
 		 """
 		session = session or requests.Session()
 		if cookies:
-			session.cookies.update(cookies)
+			for name, value in cookies.items():
+				session.cookies.set(name, value, domain="account.line.biz", path="/")
 		headers = {
 			"Content-Type": "application/json",
 			"Accept": "application/json, text/plain, */*",

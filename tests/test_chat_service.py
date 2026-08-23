@@ -36,8 +36,29 @@ class AsyncResponse:
     async def text(self):
         return "json"
 
-    async def json(self):
+    async def json(self, **kwargs):
         return self._payload
+
+
+class StreamResponse(SyncResponse):
+    def __init__(self, payload=None, chunks=()):
+        super().__init__(payload)
+        self.chunks = chunks
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def iter_lines(self, decode_unicode=True):
+        return iter(())
+
+    def iter_content(self, chunk_size):
+        return iter(self.chunks)
+
+    def close(self):
+        return None
 
 
 class FakeAioSession:
@@ -49,6 +70,10 @@ class FakeAioSession:
         if len(self.calls) == 1:
             return AsyncResponse({"contentMessageToken": "content-token"})
         return AsyncResponse({"ok": True})
+
+    def get(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return AsyncResponse({"list": []})
 
 
 class FakeFormData:
@@ -79,8 +104,85 @@ class ChatServiceTests(unittest.TestCase):
         self.assertEqual({}, result)
         _, kwargs = session.put.call_args
         self.assertEqual("xsrf", kwargs["headers"]["x-xsrf-token"])
-        self.assertIn("chat-session=secret", kwargs["headers"]["Cookie"])
+        self.assertNotIn("Cookie", kwargs["headers"])
+        self.assertEqual("secret", session.cookies.get("chat-session", domain="chat.line.biz"))
         self.assertEqual(30, kwargs["timeout"])
+
+    def test_send_message_uses_injected_edge_profile(self):
+        browser_headers = {
+            "User-Agent": "edge-user-agent",
+            "sec-ch-ua": "edge-client-hint",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+        }
+        service = ChatService(browser_headers=browser_headers)
+        session = requests.Session()
+        session.cookies.set("chat-session", "secret", domain="chat.line.biz")
+        session.post = Mock(return_value=SyncResponse())
+
+        service.send_message("Ubot", "Uchat", {"type": "text"}, session=session)
+
+        _, kwargs = session.post.call_args
+        self.assertEqual("edge-user-agent", kwargs["headers"]["User-Agent"])
+        self.assertEqual("edge-client-hint", kwargs["headers"]["sec-ch-ua"])
+        self.assertNotIn("Cookie", kwargs["headers"])
+
+    def test_stream_events_rejects_untrusted_base_url(self):
+        service = ChatService()
+        events = service.stream_events("token", base_url="https://example.com")
+
+        with self.assertRaisesRegex(Exception, "Invalid LINE streaming"):
+            next(events)
+
+    def test_stream_events_only_forwards_chat_domain_cookies(self):
+        service = ChatService()
+        session = requests.Session()
+        session.cookies.set("__Host-chat-ses", "chat-value", domain="chat.line.biz")
+        session.cookies.set("XSRF-TOKEN", "chat-xsrf", domain="chat.line.biz")
+        session.cookies.set("XSRF-TOKEN", "manager-xsrf", domain="manager.line.biz")
+        session.get = Mock(return_value=StreamResponse())
+
+        list(service.stream_events("token", session=session))
+
+        _, kwargs = session.get.call_args
+        self.assertIn("__Host-chat-ses=chat-value", kwargs["headers"]["cookie"])
+        self.assertIn("XSRF-TOKEN=chat-xsrf", kwargs["headers"]["cookie"])
+        self.assertNotIn("manager-xsrf", kwargs["headers"]["cookie"])
+
+    def test_close_stream_closes_active_response(self):
+        service = ChatService()
+        response = Mock()
+        service._active_stream_response = response
+
+        service._close_stream()
+
+        response.close.assert_called_once_with()
+
+    def test_invalid_json_is_wrapped_as_library_error(self):
+        service = ChatService()
+        response = SyncResponse()
+        response.text = "not-json"
+        response.json = Mock(side_effect=ValueError("bad json"))
+        session = requests.Session()
+        session.get = Mock(return_value=response)
+
+        with self.assertRaisesRegex(Exception, "invalid JSON response"):
+            service.get_me(session=session)
+
+    def test_sticker_save_streams_to_target_file(self):
+        service = ChatService()
+        session = requests.Session()
+        session.get = Mock(return_value=StreamResponse(chunks=(b"first", b"second")))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "sticker.png"
+            result = service.save_sticker_image("123", str(target), session=session)
+
+            self.assertEqual(b"firstsecond", target.read_bytes())
+
+        self.assertEqual(str(target), result)
+        _, kwargs = session.get.call_args
+        self.assertTrue(kwargs["stream"])
 
     def test_get_me_uses_authenticated_session(self):
         service = ChatService()
@@ -130,6 +232,25 @@ class AsyncChatServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual({"ok": True}, result)
         self.assertTrue(FakeFormData.latest.file_handle.closed)
+        self.assertEqual(120, session.calls[0][1]["timeout"].total)
+        self.assertEqual(30, session.calls[1][1]["timeout"].total)
+
+    async def test_async_message_history_matches_v3_sync_endpoint(self):
+        service = ChatService(request_timeout=17)
+        session = FakeAioSession()
+
+        result = await service.async_get_chat_messages(
+            "Ubot",
+            "Uchat",
+            before=123,
+            session=session,
+        )
+
+        self.assertEqual({"list": []}, result)
+        url, kwargs = session.calls[0]
+        self.assertIn("/api/v3/", url)
+        self.assertEqual(123, kwargs["params"]["before"])
+        self.assertEqual(17, kwargs["timeout"].total)
 
 
 if __name__ == "__main__":

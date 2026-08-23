@@ -72,7 +72,7 @@ lib = LINELib(
 | `send_mention(bot_id, chat_id, mentionee_id)` | メンション送信 |
 | `create_and_send_flex(bot_id, at_id, chat_id, title, image_url, tag_name="", tag_color="info", description="", action_label="", action_text="", delete_after_send=True)` | カード型メッセージ作成・送信 |
 | `get_chat_messages(bot_id, chat_id, limit=50, before=None, after=None)` | 履歴取得 |
-| `listen_messages(bot_id, chat_id, on_message=None)` | 履歴endpointを継続監視する旧式polling |
+| `listen_messages(bot_id, chat_id, on_message=None)` | チャット単位のSSEを継続受信 |
 
 互換alias:
 
@@ -96,7 +96,7 @@ lib = LINELib(
 | `async_send_mention(bot_id, chat_id, mentionee_id)` | asyncメンション送信 |
 | `async_get_chat_messages(bot_id, chat_id, limit=50, before=None, after=None)` | async履歴取得 |
 
-いずれも認証済みrequests SessionからCookieを辞書化し、`aiohttp` 側へ渡します。送信3種は同期APIと同じローカルレート制限を使います。
+いずれも認証済みrequests Sessionから `chat.line.biz` にdomain/pathが適合するCookieだけを抽出し、`aiohttp` 側へ渡します。送信3種は同期APIと同じローカルレート制限を使います。
 
 ### Bot・チャット・管理API
 
@@ -187,14 +187,14 @@ print(lib.chats.user.ids)
 ```python
 from LINELib import ChatService
 
-chat = ChatService(request_timeout=30, upload_timeout=120)
+chat = ChatService(request_timeout=30, upload_timeout=120, browser_headers=None)
 ```
 
-`request_timeout` は通常HTTP、`upload_timeout` はファイルuploadの秒数です。
+`request_timeout` は通常HTTP、`upload_timeout` はファイルuploadの秒数です。`browser_headers` は省略時にWindows版Chromeのprofileを使い、`LINELib` からは選択したChrome / Edge profileが自動で渡されます。
 
 ほとんどの同期メソッドは末尾に `session=None, xsrf_token=None` を受け取ります。変更・認証が必要なendpointでは、ログイン済み `requests.Session` と `chat.line.biz` のXSRF tokenを同じSessionから渡してください。省略時は未認証のmodule-level `requests` が使われる場合があり、通常の管理API操作には向きません。
 
-asyncメソッドは `cookies`, `xsrf_token`, `aiohttp.ClientSession` を受け取ります。`session=None` なら内部で作成し、終了時に閉じます。外から渡したSessionは呼出側が閉じてください。
+asyncメソッドは `cookies`, `xsrf_token`, `aiohttp.ClientSession` を受け取ります。`cookies` は名前と値の辞書、またはdomain/pathを確認済みのCookie header文字列です。`session=None` なら内部で作成し、終了時に閉じます。外から渡したSessionは呼出側が閉じてください。
 
 ### 送信・メッセージ
 
@@ -207,7 +207,7 @@ asyncメソッドは `cookies`, `xsrf_token`, `aiohttp.ClientSession` を受け�
 | `send_mention(bot_id, chat_id, mentionee_id, ...)` | mention payloadを作って送信 |
 | `get_chat_messages(bot_id, chat_id, ..., limit=50, before=None, after=None)` | 履歴 |
 | `async_get_chat_messages(bot_id, chat_id, ..., limit=50, before=None, after=None)` | async履歴 |
-| `listen_messages(bot_id, chat_id, on_message=None, ...)` | 履歴endpointを繰り返し確認する旧式polling |
+| `listen_messages(bot_id, chat_id, on_message=None, ...)` | チャット単位のSSEを継続受信 |
 | `mark_as_read(bot_id, chat_id, message_id, timestamp=None, ...)` | 指定メッセージまで既読 |
 
 `listen_messages()` には停止callbackがないため、通常の受信には停止・再接続を管理できる `LineBot.listen()` を使用してください。
@@ -299,7 +299,7 @@ auth = AuthService(
 | `resend_email_otp(session, xsrf_token, referer=...)` | 同じaccount SessionでOTP再送を要求 |
 | `login_and_get_token(email, password, client_id, code_challenge, redirect_uri, state, session=None)` | PKCE OAuth flowを進め、authorization codeを返す |
 | `get_access_token()` | コンストラクタへ設定済みのaccess tokenを返す。取得や更新はしない |
-| `get_uid_map_from_at_ids(at_id_list, chat_service)` | Bot一覧から `{at_id: bot_id}` を組み立てる |
+| `get_uid_map_from_at_ids(at_id_list, chat_service, session=None, xsrf_token=None)` | 認証済みBot一覧から `{at_id: bot_id}` を組み立てる |
 
 `login_and_get_token()` は名前に `token` を含みますが、実際の戻り値はaccess tokenではなくOAuth authorization codeです。また、reCAPTCHAや追加認証があるflowを回避しません。
 
@@ -373,11 +373,11 @@ from LINELib import RateLimitConfig
 config = RateLimitConfig(limit=18, window=60, enabled=True)
 ```
 
-frozen dataclassで、`limit >= 1` と `window > 0` を検証します。現在の `LineBot` / `LINELib` コンストラクタがこのobjectを直接受け取るわけではなく、`rate_limit`, `rate_limit_window`, `rate_limit_enabled` の個別引数を使います。
+frozen dataclassで、`limit >= 1`、`window > 0`、`enabled` がboolであることを検証し、数値を `int` / `float` へ正規化します。現在の `LineBot` / `LINELib` コンストラクタがこのobjectを直接受け取るわけではなく、`rate_limit`, `rate_limit_window`, `rate_limit_enabled` の個別引数を使います。
 
 ## 例外
 
-`LINEOAError(message, code=None, details=None)` は共通例外で、`.code` と `.details` を保持します。生成時にエラーログも出力します。
+`LINEOAError(message, code=None, details=None)` は共通例外で、`.code` と `.details` を保持します。例外生成だけではログを出さないため、必要に応じてアプリ側の例外境界で記録してください。
 
 `InteractiveLoginRequired(reason)` はそのサブクラスで、`.reason` と `code == "interactive_login_required"` を持ちます。捕捉順はサブクラスを先にします。
 

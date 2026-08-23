@@ -43,7 +43,7 @@ class LineBot:
         self.max_reconnects = self.listen_config.max_reconnects
         self._stop_event = threading.Event()
         self._listen_thread = None
-        self._last_event_id = None
+        self._last_event_ids = {}
         self._lib = LINELib(
             storage=self.cookie_path,
             email=email,
@@ -59,11 +59,8 @@ class LineBot:
         self._session = self._lib._session
         self._xsrf_token = self._lib._xsrf_token
         self._bot_ids = None
-        try:
-            if hasattr(self._lib, "bots") and hasattr(self._lib.bots, "ids"):
-                self._bot_ids = list(self._lib.bots.ids.values())
-        except Exception as e:
-            lineoa_logger.error(f"Failed to preload bot ids: {e}")
+        if hasattr(self._lib, "bots") and hasattr(self._lib.bots, "ids"):
+            self._bot_ids = list(self._lib.bots.ids.values())
         if self._bot_ids:
             lineoa_logger.login("Login success (bot account loaded)")
         else:
@@ -245,7 +242,7 @@ class LineBot:
             try:
                 handler(event)
             except Exception as e:
-                lineoa_logger.error(f"handler error ({handler.__name__}): {e}")
+                lineoa_logger.exception(f"handler error ({handler.__name__}): {e}")
 
     def _resolve_bot_id(self, botid=None):
         if botid:
@@ -269,12 +266,12 @@ class LineBot:
         try:
             while not self._stop_event.is_set():
                 try:
-                    self._last_event_id = self._lib.get_streaming_api_token_and_listen_stream_events(
+                    self._last_event_ids[bot_id] = self._lib.get_streaming_api_token_and_listen_stream_events(
                         bot_id=bot_id,
                         device_type=self.device_type,
                         client_type=self.client_type,
                         ping_secs=self.ping_secs,
-                        last_event_id=self._last_event_id,
+                        last_event_id=self._last_event_ids.get(bot_id),
                         on_event=_on_event,
                         stop_event=self._stop_event.is_set,
                         max_stream_seconds=self.listen_config.max_stream_seconds,
@@ -283,6 +280,8 @@ class LineBot:
                         break
                     reconnects = 0
                 except Exception as e:
+                    if self._stop_event.is_set():
+                        break
                     reconnects += 1
                     lineoa_logger.error(f"Polling connection error: {e}")
                     if self.max_reconnects is not None and reconnects > self.max_reconnects:
@@ -303,19 +302,29 @@ class LineBot:
         self._listen_thread.start()
         if not block:
             return self._listen_thread
+        listen_thread = self._listen_thread
         try:
             while self.running:
-                self._listen_thread.join(1)
+                listen_thread.join(1)
         except KeyboardInterrupt:
             self.stop()
             print("Bot stopped.")
 
     def stop(self):
-        self.running = False
         self._stop_event.set()
+        try:
+            self._lib._close_stream()
+        except Exception as error:
+            lineoa_logger.error(f"Failed to close polling stream: {error}")
         if (
             self._listen_thread
             and self._listen_thread.is_alive()
             and threading.current_thread() is not self._listen_thread
         ):
             self._listen_thread.join(timeout=5)
+        if (
+            self._listen_thread is None
+            or not self._listen_thread.is_alive()
+            or threading.current_thread() is self._listen_thread
+        ):
+            self.running = False

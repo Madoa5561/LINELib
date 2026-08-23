@@ -247,6 +247,51 @@ class AuthServiceTests(unittest.TestCase):
         self.assertEqual(["Ubot"], result["bot_ids"])
         self.assertEqual("owner", result["user_info"]["user_name"])
 
+    def test_cookie_save_preserves_rate_limit_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            storage_path = Path(temp_dir) / "lineoa-storage.json"
+            storage_path.write_text(
+                json.dumps({"SendTimestamps": [1.0], "FinalsendTime": 1}),
+                encoding="utf-8",
+            )
+            service = AuthService(cookie_store_path=str(storage_path))
+            session = requests.Session()
+            session.cookies.set("session", "value", domain="chat.line.biz")
+
+            service._save_cookie_storage(session, "owner")
+
+            stored = json.loads(storage_path.read_text(encoding="utf-8"))
+
+        self.assertEqual([1.0], stored["SendTimestamps"])
+        self.assertEqual(1, stored["FinalsendTime"])
+        self.assertEqual("owner", stored["user_name"])
+
+    def test_explicit_cookies_and_xsrf_are_used_for_direct_login(self):
+        service = AuthService()
+        session = requests.Session()
+        login_with_email = Mock(return_value={"status": "needReCaptchaVerification"})
+
+        with (
+            patch.object(service, "_load_cookie_storage", return_value=None),
+            patch("LINELib.AuthService.requests.Session", return_value=session),
+            patch.object(service, "_start_login", return_value=("https://account.line.biz/login", "page-xsrf", {})),
+            patch.object(service, "login_with_email", login_with_email),
+        ):
+            with self.assertRaises(InteractiveLoginRequired):
+                service.login_with_email_and_2fa(
+                    "owner@example.com",
+                    "test-password",
+                    get_2fa_code_callback=None,
+                    xsrf_token="explicit-xsrf",
+                    cookies={"account-session": "cookie-value"},
+                )
+
+        self.assertEqual(
+            "cookie-value",
+            session.cookies.get("account-session", domain="account.line.biz", path="/"),
+        )
+        self.assertEqual("explicit-xsrf", login_with_email.call_args.kwargs["xsrf_token"])
+
     def test_external_redirect_is_rejected(self):
         service = AuthService()
         with self.assertRaisesRegex(Exception, "unsafe redirect"):

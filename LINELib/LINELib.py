@@ -4,6 +4,9 @@ from .ChatService import ChatService
 from .util import ratelimiter, ratelimit_after
 from .exceptions import LINEOAError
 from .sse import SSEEvent
+from .config import RateLimitConfig
+from .session_utils import cookie_header_for_url, get_xsrf_token
+from .storage import read_json, update_json, write_json
 import os
 import requests
 import json
@@ -14,14 +17,20 @@ class LINELib:
 
     def __init__(self, storage: Optional[str] = None, email: Optional[str] = None, password: Optional[str] = None, rate_limit: int = 18, rate_limit_window: float = 60, rate_limit_enabled: bool = True, get_2fa_code_callback: Optional[Callable[[], str]] = None, interactive_login: bool = False, browser_channel: str = "chrome", interactive_timeout: float = 300):
         self.storage = storage or "lineoa-storage.json"
-        self._storage_cache = None
-        self._rate_limit = rate_limit
-        self._rate_limit_window = rate_limit_window
-        self._rate_limit_enabled = rate_limit_enabled
+        rate_config = RateLimitConfig(
+            limit=rate_limit,
+            window=rate_limit_window,
+            enabled=rate_limit_enabled,
+        )
+        self._rate_limit = rate_config.limit
+        self._rate_limit_window = rate_config.window
+        self._rate_limit_enabled = rate_config.enabled
         self._auth = AuthService(cookie_store_path=self.storage)
         self._session = None
         self._user_info = None
         self._xsrf_token = None
+        if bool(email) != bool(password):
+            raise ValueError("email and password must be provided together")
         if email and password:
             login_result = self._auth.login_with_email_and_2fa(
                 email,
@@ -35,50 +44,44 @@ class LINELib:
             self._user_info = login_result.get("user_info")
             self._bot_ids = login_result.get("bot_ids", [])
         else:
-            try:
-                self._restore_session_from_cookie(browser_channel)
-            except LINEOAError:
-                self._session = requests.Session()
-        if self._session is None:
-            self._session = requests.Session()
-        self._session.headers.update(self._auth._browser_headers_for_channel(browser_channel))
+            self._restore_session_from_cookie(browser_channel)
+        if not isinstance(self._session, requests.Session):
+            raise LINEOAError("Authentication did not return a valid session")
+        browser_headers = self._auth._browser_headers_for_channel(browser_channel)
+        self._session.headers.update(browser_headers)
         if self._xsrf_token is None:
-            for cookie in self._session.cookies:
-                if cookie.name == "XSRF-TOKEN" and "chat.line.biz" in cookie.domain:
-                    self._xsrf_token = cookie.value
-                    break
-        self._chat_service = ChatService()
+            self._xsrf_token = get_xsrf_token(self._session)
+        self._chat_service = ChatService(browser_headers=browser_headers)
         self._bots = None
         self._bot_ids = getattr(self, "_bot_ids", [])
         self._chats = None
         self._provider = None
 
     def _load_storage(self):
-        if getattr(self, "_storage_cache", None) is not None:
-            return self._storage_cache
-        if not os.path.exists(self.storage):
-            self._storage_cache = {}
-            return self._storage_cache
         try:
-            with open(self.storage, "r", encoding="utf-8") as f:
-                self._storage_cache = json.load(f)
-        except Exception:
-            self._storage_cache = {}
-        return self._storage_cache
+            return read_json(self.storage, missing={})
+        except (OSError, ValueError) as error:
+            raise LINEOAError(f"storage load error: {error}") from error
 
     def _save_storage(self, data):
-        self._storage_cache = data
-        with open(self.storage, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        try:
+            write_json(self.storage, data)
+        except (OSError, ValueError) as error:
+            raise LINEOAError(f"storage save error: {error}") from error
 
     def get_final_send_time(self):
         data = self._load_storage()
         return data.get("FinalsendTime")
 
     def set_final_send_time(self, timestamp):
-        data = self._load_storage()
-        data["FinalsendTime"] = timestamp
-        self._save_storage(data)
+        try:
+            update_json(
+                self.storage,
+                lambda data: data.__setitem__("FinalsendTime", timestamp),
+                missing={},
+            )
+        except (OSError, ValueError) as error:
+            raise LINEOAError(f"storage save error: {error}") from error
 
     def get_send_timestamps(self):
         self._clean_send_timestamps()
@@ -86,29 +89,64 @@ class LINELib:
         return data.get("SendTimestamps", [])
 
     def add_send_timestamp(self, timestamp: float):
-        data = self._load_storage() or {}
-        timestamps = data.get("SendTimestamps", [])
-        timestamps.append(timestamp)
-        history_limit = max(20, int(self._rate_limit))
-        if len(timestamps) > history_limit:
-            timestamps = timestamps[-history_limit:]
-        data["SendTimestamps"] = timestamps
-        self._save_storage(data)
+        def add_timestamp(data: Dict[str, Any]) -> None:
+            timestamps = self._valid_recent_timestamps(data, timestamp)
+            timestamps.append(float(timestamp))
+            data["SendTimestamps"] = timestamps[-self._history_limit:]
 
+        try:
+            update_json(self.storage, add_timestamp, missing={})
+        except (OSError, ValueError) as error:
+            raise LINEOAError(f"storage save error: {error}") from error
+
+    @property
+    def _history_limit(self) -> int:
+        return max(20, int(self._rate_limit))
+
+    def _valid_recent_timestamps(self, data: Dict[str, Any], now: float) -> List[float]:
+        raw_timestamps = data.get("SendTimestamps", [])
+        if not isinstance(raw_timestamps, list):
+            raw_timestamps = []
+        recent = [
+            float(timestamp)
+            for timestamp in raw_timestamps
+            if isinstance(timestamp, (int, float)) and now - float(timestamp) < self._rate_limit_window
+        ]
+        return recent[-self._history_limit:]
+
+    def _reserve_send_slot(self) -> Optional[Dict[str, Any]]:
+        if not self._rate_limit_enabled:
+            return None
+        now = time.time()
+
+        def reserve(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            timestamps = self._valid_recent_timestamps(data, now)
+            data["SendTimestamps"] = timestamps
+            if len(timestamps) >= self._rate_limit:
+                return {
+                    "ratelimit": True,
+                    "ratelimit_after": sorted(timestamps)[-self._rate_limit] + self._rate_limit_window,
+                }
+            timestamps.append(now)
+            data["SendTimestamps"] = timestamps[-self._history_limit:]
+            data["FinalsendTime"] = int(now)
+            return None
+
+        try:
+            return update_json(self.storage, reserve, missing={})
+        except (OSError, ValueError) as error:
+            raise LINEOAError(f"storage save error: {error}") from error
     def _clean_send_timestamps(self) -> None:
         """Remove timestamps older than the configured rate-limit window."""
-        data = self._load_storage() or {}
-        timestamps = data.get("SendTimestamps", [])
-        if not timestamps:
-            return
         now = time.time()
-        cleaned = [t for t in timestamps if now - t < self._rate_limit_window]
-        history_limit = max(20, int(self._rate_limit))
-        if len(cleaned) > history_limit:
-            cleaned = cleaned[-history_limit:]
-        if cleaned != timestamps:
-            data["SendTimestamps"] = cleaned
-            self._save_storage(data)
+
+        def clean(data: Dict[str, Any]) -> None:
+            data["SendTimestamps"] = self._valid_recent_timestamps(data, now)
+
+        try:
+            update_json(self.storage, clean, missing={})
+        except (OSError, ValueError) as error:
+            raise LINEOAError(f"storage save error: {error}") from error
 
     def check_rate_limit(self) -> Dict[str, Any]:
         """Return current rate-limit status."""
@@ -125,9 +163,14 @@ class LINELib:
 
     def reset_rate_limit(self) -> None:
         """Clear all send timestamps to reset the rate-limit counter."""
-        data = self._load_storage() or {}
-        data["SendTimestamps"] = []
-        self._save_storage(data)
+        try:
+            update_json(
+                self.storage,
+                lambda data: data.__setitem__("SendTimestamps", []),
+                missing={},
+            )
+        except (OSError, ValueError) as error:
+            raise LINEOAError(f"storage save error: {error}") from error
 
     def get_streaming_api_token_and_listen_stream_events(self, bot_id: str, device_type: str = "", client_type: str = "PC", ping_secs: int = 60, last_event_id: Optional[str] = None, on_event: Optional[Callable[[Dict[str, Any]], None]] = None, stop_event: Optional[Callable[[], bool]] = None, max_stream_seconds: float = 82800) -> Optional[str]:
         """
@@ -141,49 +184,50 @@ class LINELib:
         :param stop_event: 停止判定コールバック。Trueを返すとループを抜ける
         :return: 最後に受信したevent id（再接続時に使用）
         """
-        try:
-            token_info = self._chat_service.get_streaming_api_token(bot_id, session=self._session, xsrf_token=self._xsrf_token)
-            streaming_api_token = token_info.get("streamingApiToken")
-            if not isinstance(streaming_api_token, str) or not streaming_api_token:
-                raise LINEOAError("streamingApiToken is missing or invalid")
-            streaming_api_base_url = token_info.get("streamingApiBaseUrl", "https://chat-streaming-api.line.biz")
-            streaming_api_version = token_info.get("streamingApiVersion", "v2")
-            token_expired_at = token_info.get("expiredAt")
-            if isinstance(token_expired_at, (int, float)):
-                seconds_until_expiry = max(0.0, (float(token_expired_at) - time.time() * 1000.0) / 1000.0)
-                if seconds_until_expiry > 0:
-                    max_stream_seconds = min(max_stream_seconds, max(1.0, seconds_until_expiry - 60.0))
-            connection_id = token_info.get("connectionId")
-            if isinstance(connection_id, str) and connection_id:
-                self._chat_service.streaming_state(
-                    bot_id=bot_id,
-                    state={"connectionId": connection_id, "idle": True},
-                    session=self._session,
-                    xsrf_token=self._xsrf_token,
-                )
-            last_event_id = last_event_id or token_info.get("lastEventId")
-            for event in self._chat_service.stream_events(
-                streaming_api_token,
-                device_type=device_type,
-                client_type=client_type,
-                ping_secs=ping_secs,
-                last_event_id=last_event_id,
+        token_info = self._chat_service.get_streaming_api_token(bot_id, session=self._session, xsrf_token=self._xsrf_token)
+        streaming_api_token = token_info.get("streamingApiToken")
+        if not isinstance(streaming_api_token, str) or not streaming_api_token:
+            raise LINEOAError("streamingApiToken is missing or invalid")
+        streaming_api_base_url = token_info.get("streamingApiBaseUrl", "https://chat-streaming-api.line.biz")
+        streaming_api_version = token_info.get("streamingApiVersion", "v2")
+        token_expired_at = token_info.get("expiredAt")
+        if isinstance(token_expired_at, (int, float)):
+            seconds_until_expiry = max(0.0, (float(token_expired_at) - time.time() * 1000.0) / 1000.0)
+            if seconds_until_expiry > 0:
+                max_stream_seconds = min(max_stream_seconds, max(1.0, seconds_until_expiry - 60.0))
+        connection_id = token_info.get("connectionId")
+        if isinstance(connection_id, str) and connection_id:
+            self._chat_service.streaming_state(
+                bot_id=bot_id,
+                state={"connectionId": connection_id, "idle": True},
                 session=self._session,
                 xsrf_token=self._xsrf_token,
-                max_stream_seconds=max_stream_seconds,
-                base_url=streaming_api_base_url,
-                version=streaming_api_version,
-            ):
-                if stop_event and stop_event():
-                    break
-                event_id = event.get("id")
-                if event_id:
-                    last_event_id = event_id
-                if on_event:
-                    on_event(event)
-        except Exception:
-            raise
+            )
+        last_event_id = last_event_id or token_info.get("lastEventId")
+        for event in self._chat_service.stream_events(
+            streaming_api_token,
+            device_type=device_type,
+            client_type=client_type,
+            ping_secs=ping_secs,
+            last_event_id=last_event_id,
+            session=self._session,
+            xsrf_token=self._xsrf_token,
+            max_stream_seconds=max_stream_seconds,
+            base_url=streaming_api_base_url,
+            version=streaming_api_version,
+        ):
+            if stop_event and stop_event():
+                break
+            event_id = event.get("id")
+            if event_id:
+                last_event_id = event_id
+            if on_event:
+                on_event(event)
         return last_event_id
+
+    def _close_stream(self) -> None:
+        """Close an active SSE response."""
+        self._chat_service._close_stream()
 
     def get_chat_members(self, bot_id=None, chat_id=None, limit: int = 100) -> Dict[str, Any]:
         """チャットメンバー一覧取得"""
@@ -284,11 +328,14 @@ class LINELib:
         return self._chat_service.get_content_preview(bot_id=bot_id, content_hash=content_hash, session=self._session, xsrf_token=self._xsrf_token)
 
     def save_image_preview(self, bot_id: str, content_hash: str, file_path: str) -> str:
-        data = self.get_image_preview(bot_id=bot_id, content_hash=content_hash)
         os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
-        with open(file_path, "wb") as f:
-            f.write(data)
-        return file_path
+        return self._chat_service.save_content_preview(
+            bot_id=bot_id,
+            content_hash=content_hash,
+            file_path=file_path,
+            session=self._session,
+            xsrf_token=self._xsrf_token,
+        )
 
     def save_sticker_image(self, sticker_id: str, file_path: str) -> str:
         os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
@@ -371,14 +418,15 @@ class LINELib:
             bot_id = next(iter(self.bots.ids.values()), None)
         if not bot_id:
             raise LINEOAError("No bot found")
-        timestamps = self.get_send_timestamps()
-        if self._rate_limit_enabled and ratelimiter(timestamps, limit=self._rate_limit, window=self._rate_limit_window):
-            return {"ratelimit": True, "ratelimit_after": ratelimit_after(timestamps, limit=self._rate_limit, window=self._rate_limit_window)}
-        self.add_send_timestamp(time.time())
+        if not os.path.isfile(file_path):
+            raise LINEOAError(f"File not found: {file_path}")
+        rate_limit_result = self._reserve_send_slot()
+        if rate_limit_result:
+            return rate_limit_result
         return self._chat_service.send_file(
             bot_id, chat_id, file_path, session=self._session, xsrf_token=self._xsrf_token
         )
-    
+
     def listen_stream_events(self, streaming_api_token: str, device_type: str = "", client_type: str = "PC", ping_secs: int = 60, last_event_id: Optional[str] = None, on_event: Optional[Callable[[Dict[str, Any]], None]] = None, max_stream_seconds: float = 82800, base_url: str = "https://chat-streaming-api.line.biz", version: str = "v2") -> None:
         """
         chat-streaming-api.line.biz SSEイベント受信
@@ -437,7 +485,7 @@ class LINELib:
             # bots: list of dicts with 'botId' and 'name'
             self._bots = BotsInfo(bots.get("list", []))
         return self._bots
-    
+
     def get_chats(self, bot_id: str, limit: int) -> Dict[str, Any]:
         """
         指定Botのチャット一覧を取得
@@ -459,9 +507,9 @@ class LINELib:
             bot_id = next(iter(self.bots.ids.values()), None)
         if not bot_id:
             raise LINEOAError("No bot found")
-        timestamps = self.get_send_timestamps()
-        if self._rate_limit_enabled and ratelimiter(timestamps, limit=self._rate_limit, window=self._rate_limit_window):
-            return {"ratelimit": True, "ratelimit_after": ratelimit_after(timestamps, limit=self._rate_limit, window=self._rate_limit_window)}
+        rate_limit_result = self._reserve_send_slot()
+        if rate_limit_result:
+            return rate_limit_result
         now = int(time.time() * 1000)
         send_id = f"{user_id}_{now}_{random.randint(1000000,9999999)}"
         payload = {
@@ -472,8 +520,6 @@ class LINELib:
         }
         if quoteToken:
             payload["quoteToken"] = quoteToken
-        self.set_final_send_time(int(time.time()))
-        self.add_send_timestamp(time.time())
         return self._chat_service.send_message(
             bot_id, user_id, payload, session=self._session, xsrf_token=self._xsrf_token
         )
@@ -483,30 +529,24 @@ class LINELib:
             bot_id = next(iter(self.bots.ids.values()), None)
         if not bot_id:
             raise LINEOAError("No bot found")
-        timestamps = self.get_send_timestamps()
-        if self._rate_limit_enabled and ratelimiter(timestamps, limit=self._rate_limit, window=self._rate_limit_window):
-            return {"ratelimit": True, "ratelimit_after": ratelimit_after(timestamps, limit=self._rate_limit, window=self._rate_limit_window)}
+        rate_limit_result = self._reserve_send_slot()
+        if rate_limit_result:
+            return rate_limit_result
         now = int(time.time() * 1000)
         send_id = f"{user_id}_{now}_{random.randint(1000000,9999999)}"
         payload = {"id": "", "type": "textV2", "text": context, "sendId": send_id}
         if quoteToken:
             payload["quoteToken"] = quoteToken
-        self.set_final_send_time(int(time.time()))
-        self.add_send_timestamp(time.time())
-        cookies = {}
-        if hasattr(self, '_session') and isinstance(self._session, requests.Session):
-            for c in self._session.cookies:
-                cookies[c.name] = c.value
+        cookies = self._async_cookie_header()
         return await self._chat_service.async_send_message(bot_id, user_id, payload, cookies=cookies, xsrf_token=self._xsrf_token)
-    
+
     def send_mention(self, bot_id: str, chat_id: str, mentionee_id: str) -> Dict[str, Any]:
         """
         メンション送信（レートリミット判定あり）
         """
-        timestamps = self.get_send_timestamps()
-        if self._rate_limit_enabled and ratelimiter(timestamps, limit=self._rate_limit, window=self._rate_limit_window):
-            return {"ratelimit": True, "ratelimit_after": ratelimit_after(timestamps, limit=self._rate_limit, window=self._rate_limit_window)}
-        self.add_send_timestamp(time.time())
+        rate_limit_result = self._reserve_send_slot()
+        if rate_limit_result:
+            return rate_limit_result
         return self._chat_service.send_mention(bot_id, chat_id, mentionee_id, session=self._session, xsrf_token=self._xsrf_token)
 
     def create_and_send_flex(
@@ -523,6 +563,13 @@ class LINELib:
         action_text: str = "",
         delete_after_send: bool = True,
     ) -> int:
+        rate_limit_result = self._reserve_send_slot()
+        if rate_limit_result:
+            raise LINEOAError(
+                "Local send rate limit exceeded",
+                code="rate_limited",
+                details=rate_limit_result,
+            )
         return self._chat_service.create_and_send_flex(
             bot_id=bot_id,
             at_id=at_id,
@@ -558,32 +605,17 @@ class LINELib:
         return self.get_chat_members(bot_id=bot_id, chat_id=chat_id, limit=limit)
 
     def _restore_session_from_cookie(self, browser_channel: str = "chrome") -> None:
-        if not os.path.exists(self.storage):
-            raise LINEOAError("cookie storage does not exist. Please save logged-in cookies.")
-        if os.path.getsize(self.storage) == 0:
-            raise LINEOAError("cookie storage is empty. Please save logged-in cookies.")
-        with open(self.storage, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if "cookies" not in data:
-            raise LINEOAError("cookie storage is invalid")
-        session = requests.Session()
-        session.headers.update(self._auth._browser_headers_for_channel(browser_channel))
-        for c in data["cookies"]:
-            cookie_args = {"path": c.get("path") or "/"}
-            if c.get("domain"):
-                cookie_args["domain"] = c["domain"]
-            expires = c.get("expiry", c.get("expires"))
-            if isinstance(expires, (int, float)):
-                cookie_args["expires"] = int(expires)
-            if isinstance(c.get("secure"), bool):
-                cookie_args["secure"] = c["secure"]
-            session.cookies.set(c["name"], c["value"], **cookie_args)
-        self._session = session
+        data = self._auth._load_cookie_storage()
+        if data is None:
+            raise LINEOAError("cookie storage does not exist or contains no saved session")
+        self._session = self._auth._session_from_storage(data, browser_channel)
         self._user_info = {"email": data.get("email"), "user_name": data.get("user_name")}
-        for c in session.cookies:
-            if c.name == "XSRF-TOKEN" and "chat.line.biz" in c.domain:
-                self._xsrf_token = c.value
-                break
+        self._xsrf_token = get_xsrf_token(self._session)
+
+    def _async_cookie_header(self) -> str:
+        if not isinstance(self._session, requests.Session):
+            return ""
+        return cookie_header_for_url(self._session, "https://chat.line.biz/api/")
 
     async def async_send_file(self, chat_id: str, file_path: str, bot_id: Optional[str] = None) -> Dict[str, Any]:
         """Async wrapper for sending a file."""
@@ -591,40 +623,31 @@ class LINELib:
             bot_id = next(iter(self.bots.ids.values()), None)
         if not bot_id:
             raise LINEOAError("No bot found")
-        timestamps = self.get_send_timestamps()
-        if self._rate_limit_enabled and ratelimiter(timestamps, limit=self._rate_limit, window=self._rate_limit_window):
-            return {"ratelimit": True, "ratelimit_after": ratelimit_after(timestamps, limit=self._rate_limit, window=self._rate_limit_window)}
-        self.add_send_timestamp(time.time())
-        cookies = {}
-        if hasattr(self, '_session') and isinstance(self._session, requests.Session):
-            for c in self._session.cookies:
-                cookies[c.name] = c.value
+        if not os.path.isfile(file_path):
+            raise LINEOAError(f"File not found: {file_path}")
+        rate_limit_result = self._reserve_send_slot()
+        if rate_limit_result:
+            return rate_limit_result
+        cookies = self._async_cookie_header()
         return await self._chat_service.async_send_file(bot_id, chat_id, file_path, cookies=cookies, xsrf_token=self._xsrf_token)
 
     async def async_send_mention(self, bot_id: str, chat_id: str, mentionee_id: str) -> Dict[str, Any]:
         """Async wrapper for sending a mention."""
-        timestamps = self.get_send_timestamps()
-        if self._rate_limit_enabled and ratelimiter(timestamps, limit=self._rate_limit, window=self._rate_limit_window):
-            return {"ratelimit": True, "ratelimit_after": ratelimit_after(timestamps, limit=self._rate_limit, window=self._rate_limit_window)}
-        self.add_send_timestamp(time.time())
+        rate_limit_result = self._reserve_send_slot()
+        if rate_limit_result:
+            return rate_limit_result
         mention_text = f"@{mentionee_id} "
         payload = {
             "type": "text",
             "text": mention_text,
             "mentions": [{"userId": mentionee_id, "offset": 0, "length": len(mention_text)}]
         }
-        cookies = {}
-        if hasattr(self, '_session') and isinstance(self._session, requests.Session):
-            for c in self._session.cookies:
-                cookies[c.name] = c.value
+        cookies = self._async_cookie_header()
         return await self._chat_service.async_send_message(bot_id, chat_id, payload, cookies=cookies, xsrf_token=self._xsrf_token)
 
     async def async_get_chat_messages(self, bot_id: str, chat_id: str, limit: int = 50, before: Optional[str] = None, after: Optional[str] = None) -> Dict[str, Any]:
         """Async wrapper for fetching chat messages."""
-        cookies = {}
-        if hasattr(self, '_session') and isinstance(self._session, requests.Session):
-            for c in self._session.cookies:
-                cookies[c.name] = c.value
+        cookies = self._async_cookie_header()
         return await self._chat_service.async_get_chat_messages(bot_id, chat_id, cookies=cookies, xsrf_token=self._xsrf_token, limit=limit, before=before, after=after)
 
     @property
@@ -651,19 +674,21 @@ class LINELib:
     def provider(self):
         if self._provider is None:
             try:
-                url = "https://chat.line.biz/api/v1/providers"
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-                    "Accept": "application/json, text/plain, */*",
-                }
-                if self._session is None:
-                    self._session = requests.Session()
-                resp = self._session.get(url, headers=headers, timeout=self._chat_service.request_timeout)
-                if resp.ok:
-                    self._provider = resp.json()
-                else:
-                    self._provider = []
-                    raise LINEOAError(f"プロバイダー取得失敗: {resp.status_code} {resp.text}")
+                response = self._chat_service._request(
+                    "get_providers",
+                    self._session.get,
+                    "https://chat.line.biz/api/v1/providers",
+                    headers=self._chat_service._session_headers(
+                        self._session,
+                        xsrf_token=self._xsrf_token,
+                    ),
+                    timeout=self._chat_service.request_timeout,
+                )
+                if not response.ok:
+                    raise LINEOAError(f"プロバイダー取得失敗: HTTP {response.status_code}")
+                self._provider = response.json()
+                if not isinstance(self._provider, (dict, list)):
+                    raise LINEOAError("プロバイダー取得失敗: JSON response is invalid")
             except Exception as e:
                 self._provider = []
                 raise LINEOAError(f"プロバイダー取得例外: {e}")

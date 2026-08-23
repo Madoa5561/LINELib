@@ -81,7 +81,7 @@ bot = LineBot(
 
 初回ログインで新しい保存Cookieを作成してください。手作業でCookie JSONを修復するより、公式ログインをやり直す方が安全です。既存ファイルを調査する場合も、値をIssueやログへ貼らないでください。
 
-Cookieだけで `LineBot` を作成した場合、復元エラーがログへ出ても未認証Sessionで初期化が続くことがあります。続けて `bot.getBots()` を実行し、実際に認証済みか確認してください。
+Cookieだけで `LineBot` を作成した場合、Cookieの復元またはBot一覧取得に失敗すると `LINEOAError` で初期化を中止します。未認証Sessionのまま処理は続行しません。
 
 ## `No bot found` / `No bot_id found`
 
