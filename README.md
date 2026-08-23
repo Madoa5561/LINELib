@@ -19,6 +19,21 @@ LINELib でできること:
 - link メッセージの JSON 保存
 - 管理系 API の取得
 
+## ドキュメント
+
+初めて使う場合は、次の順番で読むとライブラリ全体を把握できます。
+
+1. [ドキュメント目次](docs/README.md) - 機能、用語、クラス構成の全体像
+2. [はじめに](docs/getting-started.md) - インストールから最初の送受信まで
+3. [認証](docs/authentication.md) - Cookie、直接HTTP、Chrome/Edge、OTP
+4. [メッセージとメディア](docs/messages-and-media.md) - 送信、取得、保存、Flex
+5. [イベントとPolling](docs/events-and-polling.md) - SSE、ハンドラ、正規化形式
+6. [LineBot API](docs/linebot-api.md) - 推奨入口の全引数・全公開メソッド
+7. [低レベルAPI](docs/low-level-api.md) - LINELib、ChatService、AuthService、SSE
+8. [トラブルシューティング](docs/troubleshooting.md) - 症状別の確認方法
+
+迷った場合は、高レベルAPIの `LineBot` を使用してください。`LINELib` はasync APIや細かな制御が必要な場合、`ChatService` / `AuthService` は認証済みSessionを自分で管理する場合の低レベル入口です。
+
 ## インストール
 
 Python 3.10 以上が必要です。
@@ -138,10 +153,16 @@ def on_message(event):
 - `on_init`
 - `on_ping`
 - `on_message`
+- `on_image`
+- `on_video`
+- `on_file`
+- `on_audio`
+- `on_sticker`
+- `on_link`
 - `on_media`
 - `on_unknown`
 
-`on_media` は `image` / `video` / `file` / `audio` / `sticker` / `link` をまとめて扱う入口です。
+`on_media` は `image` / `video` / `file` / `audio` / `sticker` / `link` をまとめて扱うfallbackです。`on_image` など種別固有のハンドラが登録されている場合は、そちらが先に呼ばれます。完全な優先順位は[イベントとPolling](docs/events-and-polling.md#ハンドラ名と選択順)を参照してください。
 
 ### メディアイベントの正規化
 
@@ -325,7 +346,7 @@ SSE 1件を表します。
 
 | メソッド | 説明 |
 |---|---|
-| `payload` | JSON パース済み payload |
+| `payload` | JSON パース済みpayload property |
 | `normalized_message()` | メッセージ正規化 |
 | `image_url()` | 画像プレビュー URL |
 
@@ -376,20 +397,10 @@ def on_message(event):
     normalized = bot.normalize_message_event(event)
     if normalized.get("message_type") == "text" and normalized.get("text") == "ping":
         bot.sendMessage(bot_id=normalized["bot_id"], chat_id=normalized["chat_id"], text="pong")
-    if normalized.get("kind") == "media":
+    if normalized.get("message_type") in {"image", "video", "file", "audio", "sticker", "link"}:
         bot.save_message_media(event, f"./outputs/{normalized['message_id']}")
 
 bot.listen(botid=BOT_ID)
-```
-
-### ステッカー保存
-
-```python
-@bot.event
-def on_media(event):
-    normalized = event.get("normalized", {})
-    if normalized.get("message_type") == "sticker":
-        bot.save_message_media(event, f"./outputs/{normalized['message_id']}")
 ```
 
 ### 動画保存

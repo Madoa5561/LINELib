@@ -1,0 +1,260 @@
+# メッセージとメディア
+
+通常の操作には `LineBot` を使います。このページの `bot` は、認証済みCookieで次のように作成済みとします。
+
+```python
+from LINELib import LineBot
+
+bot = LineBot(cookie_path="lineoa-storage.json")
+```
+
+## IDの使い分け
+
+| 引数 | 内容 |
+|---|---|
+| `bot_id` | 送信元となるOfficial AccountのID |
+| `chat_id` | 送信先チャットのID。1対1とグループの両方で使用 |
+| `mentionee_id` | メンション対象ユーザーのID |
+| `at_id` | Official Accountの `basicSearchId`。カード型Flexの作成で使用 |
+
+`bot_id` を省略できるメソッドは、取得できたBot一覧の先頭を使用します。複数アカウント環境では明示を推奨します。
+
+## テキスト送信
+
+```python
+result = bot.sendMessage(
+    bot_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    chat_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    text="Hello from LINELib!",
+)
+```
+
+`LineBot.sendMessage()` の引数は `(bot_id, chat_id, text, quoteToken=None)` です。中間層の `LINELib.sendMessage()` は互換aliasで、引数が `(user_id, text, bot_id=None, quoteToken=None)` と異なります。クラスを切り替える場合は位置引数を避け、名前付き引数を使用してください。
+
+成功時の戻り値は通常 `{}` です。HTTPエラーは `LINEOAError`、ローカルレート制限は `{"ratelimit": True, "ratelimit_after": UNIX timestamp}` です。
+
+## 返信付き送信
+
+受信メッセージに含まれる `quoteToken` を渡します。
+
+```python
+result = bot.sendMessage(
+    bot_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    chat_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    text="返信します",
+    quoteToken="received-quote-token",
+)
+```
+
+正規化形式は現在 `quoteToken` を独立フィールドへ移さないため、必要な場合は受信イベントの `normalized["raw"]` または元のイベントから取得してください。
+
+## ファイル送信
+
+```python
+result = bot.sendFile(
+    bot_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    chat_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    file_path="./image.png",
+)
+```
+
+ファイルをアップロードして `contentMessageToken` を取得し、そのtokenを使って送信します。ファイルが存在しない場合はPythonのファイル例外、uploadまたは送信が失敗した場合は `LINEOAError` になります。
+
+## メンション送信
+
+`LineBot` はメンションの直接wrapperを公開していません。中間層の `LINELib` を使用します。
+
+```python
+from LINELib import LINELib
+
+lib = LINELib(storage="lineoa-storage.json")
+result = lib.send_mention(
+    bot_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    chat_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    mentionee_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+)
+```
+
+互換alias `sendMention()` もあります。新しいコードではsnake_caseの `send_mention()` を推奨します。
+
+## カード型Flex
+
+この実装のFlexはMessaging APIの任意Flex JSONを直接送る機能ではありません。Manager APIでカード型メッセージを一時作成し、作成された `cardTypeMessageId` をチャットへ送信する処理です。
+
+```python
+card_id = bot.create_and_send_flex(
+    bot_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    at_id="@example",
+    chat_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    title="お知らせ",
+    image_url="https://example.com/image.jpg",
+    tag_name="NEW",
+    tag_color="info",
+    description="説明文",
+    action_label="開く",
+    action_text="詳細を見る",
+    delete_after_send=True,
+)
+print(card_id)
+```
+
+戻り値は作成されたカードIDです。`delete_after_send=True` では送信後にManager側の一時カードを削除します。送信済みメッセージを取り消す指定ではありません。`image_url` はLINE側から取得できる公開HTTPS URLを使用してください。
+
+## Bot、チャット、履歴、メンバー
+
+```python
+accounts = bot.getBots()
+print(accounts.ids)
+
+chats = bot.getChats(bot_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", limit=100)
+messages = bot.getChatMessages(
+    bot_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    chat_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    limit=50,
+)
+members = bot.getMembers(
+    bot_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    chat_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    limit=100,
+)
+```
+
+- `getBots()` は `BotsInfo` を返し、`.ids` で `{basicSearchIdまたは名前: bot_id}` を取得できます。
+- `getChats()`、`getChatMessages()`、`getMembers()` はLINE内部APIのJSONを `dict` のまま返します。
+- `before` / `after` は履歴APIへ渡すページング値です。具体的な値は直前のレスポンスに含まれる情報を使用します。
+- 内部APIの生レスポンスキーはLINE側の変更対象です。存在確認には `.get()` を使用してください。
+
+## 管理情報の取得
+
+`LineBot` には管理画面関連の取得wrapperがあります。すべて認証済みSessionを使い、基本的にLINE側のJSONを `dict` のまま返します。
+
+| 分類 | メソッド |
+|---|---|
+| ログイン利用者・Bot | `get_me()`, `get_bot_account()`, `get_csrf_token()` |
+| チャット | `get_pinned_messages()`, `get_activities()`, `get_notes()`, `get_use_manual_chat()` |
+| Bot設定 | `get_chat_mode()`, `get_chat_mode_schedules()`, `get_available_features()`, `get_banner_web()`, `get_call_session()` |
+| 入力支援 | `set_typing()`, `get_recent_stickers()`, `get_recent_emojis()`, `get_saved_replies()` |
+| 権限・共通情報 | `get_authorized_users()`, `get_whitelist_domains()`, `get_me_settings_pc()`, `get_plugins()` |
+| 時刻・休日 | `get_clock_now()`, `get_holiday()` |
+
+引数の完全な一覧は[LineBot API](linebot-api.md)を参照してください。
+
+## イベントを正規化する
+
+```python
+normalized = bot.normalize_message_event(event)
+print(normalized.get("message_type"))
+print(normalized.get("content_hash"))
+print(normalized.get("file_name"))
+```
+
+正規化形式の全フィールドは[イベントとPolling](events-and-polling.md#正規化メッセージ)を参照してください。メッセージでないイベントは `{"kind": "unknown", "raw_event": event}` になります。
+
+## 受信メディアを保存する
+
+```python
+saved_path = bot.save_message_media(event, "./outputs/message")
+print(saved_path)
+```
+
+拡張子を指定しない場合は次のように補完します。
+
+| `message_type` | 既定の拡張子 | 保存内容 |
+|---|---|---|
+| `image` | `.jpg` | content previewのbytes |
+| `video` | `.mp4` | content previewのbytes |
+| `file` | 元ファイルの拡張子、なければ `.bin` | content previewのbytes |
+| `audio` | `.m4a` | content previewのbytes |
+| `sticker` | `.png` | sticker CDNの画像 |
+| `link` | `.json` | linkメタデータ |
+
+出力先の親ディレクトリは自動作成され、戻り値は実際の保存パスです。
+
+`link` のJSONには次のキーが入ります。
+
+- `message_id`
+- `bot_id`
+- `chat_id`
+- `title`
+- `url`
+- `text`
+- `timestamp`
+- `raw`
+
+画像・動画・ファイル・音声に `content_hash` がない場合、ステッカーに `sticker_id` がない場合は `LINEOAError` です。期限切れメディアは `expired` / `expired_at` を確認してください。
+
+## プレビューとステッカーを直接保存する
+
+```python
+preview_bytes = bot.get_image_preview(
+    bot_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    content_hash="content-hash",
+)
+
+preview_path = bot.save_image_preview(
+    bot_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    content_hash="content-hash",
+    file_path="./outputs/preview.jpg",
+)
+
+sticker_path = bot.save_sticker_image(
+    sticker_id="123456789",
+    file_path="./outputs/sticker.png",
+)
+```
+
+`get_image_preview()` はbytes、2つの `save_*()` は保存パスを返します。メソッド名はimageですが、内部ではcontent preview endpointを使用します。受信イベントからの保存には、種別を判定する `save_message_media()` の方が安全です。
+
+## ローカルレート制限
+
+`LineBot` の既定値は60秒間に18回です。テキスト、ファイル、メンションの送信履歴をCookie保存先と同じJSONへ記録します。
+
+```python
+status = bot.getRateLimitStatus()
+print(status)
+
+if status["limited"]:
+    print(status["ratelimit_after"])
+```
+
+戻り値:
+
+| キー | 内容 |
+|---|---|
+| `limited` | 現在ローカル制限中か |
+| `count` | 設定window内の送信記録数 |
+| `limit` | 設定上限 |
+| `window` | 判定秒数 |
+| `enabled` | ローカル判定が有効か |
+| `ratelimit_after` | 制限解除予定のUNIX timestamp。制限外は0 |
+
+`resetRateLimit()` はローカル履歴だけを消します。LINE側の制限は解除しません。通常運用での制限回避目的には使用しないでください。
+
+## async API
+
+async機能は `LINELib` にあります。
+
+```python
+import asyncio
+
+from LINELib import LINELib
+
+
+async def main() -> None:
+    lib = LINELib(storage="lineoa-storage.json")
+    await lib.async_send_message(
+        user_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        context="async text",
+        bot_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    )
+    await lib.async_send_file(
+        chat_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        file_path="./image.png",
+        bot_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    )
+
+
+asyncio.run(main())
+```
+
+`async_send_message()`、`async_send_file()`、`async_send_mention()` も同じローカルレート制限を使います。`async_get_chat_messages()` は送信履歴を変更しません。内部で作成した `aiohttp.ClientSession` は処理後に閉じます。
