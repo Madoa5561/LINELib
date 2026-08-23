@@ -6,8 +6,6 @@ from .util import merge_dicts
 from .LINELib import LINELib
 from .config import ListenConfig, RateLimitConfig
 from .sse import SSEEvent, SSEParser
-from typing import Any
-
 __all__ = [
     "ChatService",
     "AuthService",
@@ -21,7 +19,7 @@ __all__ = [
     "SSEParser",
 ]
 __author__ = "madoa5561"
-__version__ = "7.6.7"
+__version__ = "7.7.8"
 
 __license__ = "MIT"
 

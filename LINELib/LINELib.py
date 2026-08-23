@@ -24,7 +24,7 @@ class LINELib:
         self._xsrf_token = None
         try:
             self._restore_session_from_cookie()
-        except LINEOAError as e:
+        except LINEOAError:
             if email and password:
                 login_result = self._auth.login_with_email_and_2fa(email, password, get_2fa_code_callback=None)
                 self._session = login_result.get("session")
@@ -80,21 +80,23 @@ class LINELib:
         data = self._load_storage() or {}
         timestamps = data.get("SendTimestamps", [])
         timestamps.append(timestamp)
-        if len(timestamps) > 20:
-            timestamps = timestamps[-20:]
+        history_limit = max(20, int(self._rate_limit))
+        if len(timestamps) > history_limit:
+            timestamps = timestamps[-history_limit:]
         data["SendTimestamps"] = timestamps
         self._save_storage(data)
 
     def _clean_send_timestamps(self) -> None:
-        """Remove timestamps older than 60 seconds from storage."""
+        """Remove timestamps older than the configured rate-limit window."""
         data = self._load_storage() or {}
         timestamps = data.get("SendTimestamps", [])
         if not timestamps:
             return
         now = time.time()
-        cleaned = [t for t in timestamps if now - t < 60]
-        if len(cleaned) > 20:
-            cleaned = cleaned[-20:]
+        cleaned = [t for t in timestamps if now - t < self._rate_limit_window]
+        history_limit = max(20, int(self._rate_limit))
+        if len(cleaned) > history_limit:
+            cleaned = cleaned[-history_limit:]
         if cleaned != timestamps:
             data["SendTimestamps"] = cleaned
             self._save_storage(data)
@@ -147,6 +149,8 @@ class LINELib:
                 self._chat_service.streaming_state(
                     bot_id=bot_id,
                     state={"connectionId": connection_id, "idle": True},
+                    session=self._session,
+                    xsrf_token=self._xsrf_token,
                 )
             last_event_id = last_event_id or token_info.get("lastEventId")
             for event in self._chat_service.stream_events(
@@ -168,7 +172,7 @@ class LINELib:
                     last_event_id = event_id
                 if on_event:
                     on_event(event)
-        except Exception as e:
+        except Exception:
             raise
         return last_event_id
 
@@ -179,28 +183,48 @@ class LINELib:
         )
 
     def get_me(self) -> Dict[str, Any]:
-        return self._chat_service.get_me()
+        return self._chat_service.get_me(session=self._session, xsrf_token=self._xsrf_token)
 
     def get_bot_account(self, bot_id: str, no_filter: bool = True) -> Dict[str, Any]:
-        return self._chat_service.get_bot_account(bot_id=bot_id, no_filter=no_filter)
+        return self._chat_service.get_bot_account(
+            bot_id=bot_id,
+            no_filter=no_filter,
+            session=self._session,
+            xsrf_token=self._xsrf_token,
+        )
 
     def get_csrf_token(self) -> Dict[str, Any]:
-        return self._chat_service.get_csrf_token()
+        return self._chat_service.get_csrf_token(session=self._session)
 
     def get_pinned_messages(self, bot_id: str, chat_id: str) -> Dict[str, Any]:
-        return self._chat_service.get_pinned_messages(bot_id=bot_id, chat_id=chat_id)
+        return self._chat_service.get_pinned_messages(
+            bot_id=bot_id,
+            chat_id=chat_id,
+            session=self._session,
+            xsrf_token=self._xsrf_token,
+        )
 
     def set_typing(self, bot_id: str, chat_id: str) -> Dict[str, Any]:
-        return self._chat_service.set_typing(bot_id=bot_id, chat_id=chat_id)
+        return self._chat_service.set_typing(
+            bot_id=bot_id,
+            chat_id=chat_id,
+            session=self._session,
+            xsrf_token=self._xsrf_token,
+        )
 
     def streaming_state(self, bot_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
-        return self._chat_service.streaming_state(bot_id=bot_id, state=state)
+        return self._chat_service.streaming_state(
+            bot_id=bot_id,
+            state=state,
+            session=self._session,
+            xsrf_token=self._xsrf_token,
+        )
 
     def get_whitelist_domains(self) -> Dict[str, Any]:
-        return self._chat_service.get_whitelist_domains()
+        return self._chat_service.get_whitelist_domains(session=self._session, xsrf_token=self._xsrf_token)
 
     def get_me_settings_pc(self) -> Dict[str, Any]:
-        return self._chat_service.get_me_settings_pc()
+        return self._chat_service.get_me_settings_pc(session=self._session, xsrf_token=self._xsrf_token)
 
     def get_chat_mode(self, bot_id: str) -> Dict[str, Any]:
         return self._chat_service.get_chat_mode(bot_id=bot_id, session=self._session, xsrf_token=self._xsrf_token)
@@ -252,9 +276,18 @@ class LINELib:
 
     def save_image_preview(self, bot_id: str, content_hash: str, file_path: str) -> str:
         data = self.get_image_preview(bot_id=bot_id, content_hash=content_hash)
+        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
         with open(file_path, "wb") as f:
             f.write(data)
         return file_path
+
+    def save_sticker_image(self, sticker_id: str, file_path: str) -> str:
+        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+        return self._chat_service.save_sticker_image(
+            sticker_id=sticker_id,
+            file_path=file_path,
+            session=self._session,
+        )
 
     def normalize_message_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
         sse_event = SSEEvent(id=event.get("id"), event=event.get("type"), data=json.dumps(event.get("payload", {}), ensure_ascii=False))
@@ -279,6 +312,8 @@ class LINELib:
                 extension = "png"
             if extension:
                 target_path = f"{target_path}.{extension}"
+
+        os.makedirs(os.path.dirname(os.path.abspath(target_path)), exist_ok=True)
 
         if message_type == "link":
             payload = {
@@ -385,7 +420,7 @@ class LINELib:
         :param chat_id: チャットID
         :param on_message: 新着メッセージ受信時のコールバック (dict)
         """
-        return self._chat_service.listen_messages(bot_id, chat_id, on_message)
+        return self._chat_service.listen_messages(bot_id, chat_id, on_message, session=self._session)
 
     def get_bots(self):
         if self._bots is None:
@@ -439,11 +474,16 @@ class LINELib:
             bot_id = next(iter(self.bots.ids.values()), None)
         if not bot_id:
             raise LINEOAError("No bot found")
+        timestamps = self.get_send_timestamps()
+        if self._rate_limit_enabled and ratelimiter(timestamps, limit=self._rate_limit, window=self._rate_limit_window):
+            return {"ratelimit": True, "ratelimit_after": ratelimit_after(timestamps, limit=self._rate_limit, window=self._rate_limit_window)}
         now = int(time.time() * 1000)
         send_id = f"{user_id}_{now}_{random.randint(1000000,9999999)}"
         payload = {"id": "", "type": "textV2", "text": context, "sendId": send_id}
         if quoteToken:
             payload["quoteToken"] = quoteToken
+        self.set_final_send_time(int(time.time()))
+        self.add_send_timestamp(time.time())
         cookies = {}
         if hasattr(self, '_session') and isinstance(self._session, requests.Session):
             for c in self._session.cookies:
@@ -459,6 +499,36 @@ class LINELib:
             return {"ratelimit": True, "ratelimit_after": ratelimit_after(timestamps, limit=self._rate_limit, window=self._rate_limit_window)}
         self.add_send_timestamp(time.time())
         return self._chat_service.send_mention(bot_id, chat_id, mentionee_id, session=self._session, xsrf_token=self._xsrf_token)
+
+    def create_and_send_flex(
+        self,
+        bot_id: str,
+        at_id: str,
+        chat_id: str,
+        title: str,
+        image_url: str,
+        tag_name: str = "",
+        tag_color: str = "info",
+        description: str = "",
+        action_label: str = "",
+        action_text: str = "",
+        delete_after_send: bool = True,
+    ) -> int:
+        return self._chat_service.create_and_send_flex(
+            bot_id=bot_id,
+            at_id=at_id,
+            chat_id=chat_id,
+            title=title,
+            image_url=image_url,
+            tag_name=tag_name,
+            tag_color=tag_color,
+            description=description,
+            action_label=action_label,
+            action_text=action_text,
+            delete_after_send=delete_after_send,
+            session=self._session,
+            xsrf_token=self._xsrf_token,
+        )
 
     def sendMessage(self, user_id: str, text: str, bot_id: Optional[str] = None, quoteToken: Optional[str] = None):
         return self.send_message(user_id, text, bot_id=bot_id, quoteToken=quoteToken)
@@ -503,6 +573,10 @@ class LINELib:
             bot_id = next(iter(self.bots.ids.values()), None)
         if not bot_id:
             raise LINEOAError("No bot found")
+        timestamps = self.get_send_timestamps()
+        if self._rate_limit_enabled and ratelimiter(timestamps, limit=self._rate_limit, window=self._rate_limit_window):
+            return {"ratelimit": True, "ratelimit_after": ratelimit_after(timestamps, limit=self._rate_limit, window=self._rate_limit_window)}
+        self.add_send_timestamp(time.time())
         cookies = {}
         if hasattr(self, '_session') and isinstance(self._session, requests.Session):
             for c in self._session.cookies:
@@ -511,6 +585,10 @@ class LINELib:
 
     async def async_send_mention(self, bot_id: str, chat_id: str, mentionee_id: str) -> Dict[str, Any]:
         """Async wrapper for sending a mention."""
+        timestamps = self.get_send_timestamps()
+        if self._rate_limit_enabled and ratelimiter(timestamps, limit=self._rate_limit, window=self._rate_limit_window):
+            return {"ratelimit": True, "ratelimit_after": ratelimit_after(timestamps, limit=self._rate_limit, window=self._rate_limit_window)}
+        self.add_send_timestamp(time.time())
         mention_text = f"@{mentionee_id} "
         payload = {
             "type": "text",
@@ -562,7 +640,7 @@ class LINELib:
                 }
                 if self._session is None:
                     self._session = requests.Session()
-                resp = self._session.get(url, headers=headers)
+                resp = self._session.get(url, headers=headers, timeout=self._chat_service.request_timeout)
                 if resp.ok:
                     self._provider = resp.json()
                 else:

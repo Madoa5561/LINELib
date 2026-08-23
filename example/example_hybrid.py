@@ -1,8 +1,7 @@
+import json
 import os
 import threading
-import time
-
-from flask import Flask, request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from LINELib import LineBot
 
@@ -11,14 +10,29 @@ BOT_ID = os.environ["LINEOA_BOT_ID"]
 COOKIE_PATH = os.environ.get("LINEOA_COOKIE_PATH", "lineoa-storage.json")
 
 bot = LineBot(cookie_path=COOKIE_PATH, ping_secs=30, max_stream_seconds=7200)
-app = Flask(__name__)
 
 
-@app.post("/callback")
-def callback():
-    payload = request.get_json(force=True, silent=True) or {}
-    print("incoming webhook payload:", payload)
-    return {"ok": True}
+class CallbackHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        if self.path != "/callback":
+            self.send_error(404)
+            return
+        content_length = int(self.headers.get("Content-Length", "0"))
+        try:
+            payload = json.loads(self.rfile.read(content_length) or b"{}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self.send_error(400, "invalid JSON")
+            return
+        print("incoming webhook event count:", len(payload.get("events", [])))
+        body = b'{"ok":true}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        return
 
 
 @bot.event
@@ -33,7 +47,10 @@ def on_message(event):
 
 
 if __name__ == "__main__":
-    threading.Thread(target=app.run, kwargs={"port": 6100, "use_reloader": False}, daemon=True).start()
-    bot.listen(botid=BOT_ID)
-    while True:
-        time.sleep(1)
+    server = ThreadingHTTPServer(("127.0.0.1", 6100), CallbackHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        bot.listen(botid=BOT_ID)
+    finally:
+        server.shutdown()
+        server.server_close()

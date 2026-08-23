@@ -10,7 +10,7 @@ def main() -> None:
     at_id = os.environ["LINEOA_AT_ID"]
 
     bot = LineBot(cookie_path=cookie_path)
-    bot._lib._chat_service.create_and_send_flex(
+    bot.create_and_send_flex(
         bot_id=bot_id,
         at_id=at_id,
         chat_id=chat_id,
@@ -22,8 +22,6 @@ def main() -> None:
         action_label="Open",
         action_text="Open",
         delete_after_send=True,
-        session=bot._session,
-        xsrf_token=bot._xsrf_token,
     )
 
 

@@ -1,5 +1,4 @@
 import os
-import time
 
 from LINELib import LineBot
 
@@ -45,5 +44,3 @@ def on_unknown(event):
 
 if __name__ == "__main__":
     bot.listen(botid=BOT_ID)
-    while True:
-        time.sleep(1)

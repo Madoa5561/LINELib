@@ -13,13 +13,15 @@ import requests as _requests
 from .logger import lineoa_logger
 
 class ChatService:
-    def __init__(self):
+    def __init__(self, request_timeout: float = 30, upload_timeout: float = 120):
         self.v1_BASE_URL = "https://chat.line.biz/api/v1"
         self.v2_BASE_URL = "https://chat.line.biz/api/v2"
         self.v3_BASE_URL = "https://chat.line.biz/api/v3"
         self.v4_BASE_URL = "https://chat.line.biz/api/v4"
         self.manager_BASE_URL = "https://manager.line.biz/api"
         self.chat_client_version = "20240513144702"
+        self.request_timeout = request_timeout
+        self.upload_timeout = upload_timeout
         self.headers = {
             "Content-Type": "application/json"
         }
@@ -52,21 +54,21 @@ class ChatService:
 
     def _get_json(self, url: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None, params: Optional[Dict[str, Any]] = None, origin: Optional[str] = None, referer: Optional[str] = None) -> Dict[str, Any]:
         req = session if session else requests
-        resp = req.get(url, headers=self._session_headers(session, xsrf_token=xsrf_token, origin=origin, referer=referer), params=params)
+        resp = req.get(url, headers=self._session_headers(session, xsrf_token=xsrf_token, origin=origin, referer=referer), params=params, timeout=self.request_timeout)
         if not resp.ok:
             raise LINEOAError(f"GET {url} failed: {resp.status_code} {resp.text}")
         return resp.json()
 
     def _put_json(self, url: str, payload: Optional[Dict[str, Any]] = None, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None, origin: Optional[str] = None, referer: Optional[str] = None) -> Dict[str, Any]:
         req = session if session else requests
-        resp = req.put(url, headers=self._session_headers(session, xsrf_token=xsrf_token, origin=origin, referer=referer), json=payload)
+        resp = req.put(url, headers=self._session_headers(session, xsrf_token=xsrf_token, origin=origin, referer=referer), json=payload, timeout=self.request_timeout)
         if not resp.ok:
             raise LINEOAError(f"PUT {url} failed: {resp.status_code} {resp.text}")
         return resp.json() if resp.text else {}
 
     def _post_json(self, url: str, payload: Optional[Dict[str, Any]] = None, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None, origin: Optional[str] = None, referer: Optional[str] = None) -> Dict[str, Any]:
         req = session if session else requests
-        resp = req.post(url, headers=self._session_headers(session, xsrf_token=xsrf_token, origin=origin, referer=referer), json=payload)
+        resp = req.post(url, headers=self._session_headers(session, xsrf_token=xsrf_token, origin=origin, referer=referer), json=payload, timeout=self.request_timeout)
         if not resp.ok:
             raise LINEOAError(f"POST {url} failed: {resp.status_code} {resp.text}")
         return resp.json() if resp.text else {}
@@ -137,7 +139,7 @@ class ChatService:
             headers_upload["X-XSRF-TOKEN"] = xsrf_token
         with open(file_path, "rb") as f:
             files = {"file": (os.path.basename(file_path), f, "application/octet-stream")}
-            resp_upload = req.post(url_upload, headers=headers_upload, files=files)
+            resp_upload = req.post(url_upload, headers=headers_upload, files=files, timeout=self.upload_timeout)
         if not resp_upload.ok:
             raise LINEOAError(f"uploadFile failed: {resp_upload.status_code} {resp_upload.text}")
         token = resp_upload.json().get("contentMessageToken")
@@ -163,7 +165,7 @@ class ChatService:
             headers_bulk["x-xsrf-token"] = xsrf_token
         send_id = f"{chat_id}_{int(time.time()*1000)}_{random.randint(1000000,9999999)}"
         payload = {"items": [{"sendId": send_id, "contentMessageToken": token}]}
-        resp_bulk = req.post(url_bulk, headers=headers_bulk, json=payload)
+        resp_bulk = req.post(url_bulk, headers=headers_bulk, json=payload, timeout=self.request_timeout)
         if not resp_bulk.ok:
             raise LINEOAError(f"bulkSendFiles failed: {resp_bulk.status_code} {resp_bulk.text}")
         return resp_bulk.json()
@@ -190,13 +192,19 @@ class ChatService:
             session = aiohttp.ClientSession()
             own_session = True
         try:
-            data = aiohttp.FormData()
-            data.add_field('file', open(file_path, 'rb'), filename=os.path.basename(file_path), content_type='application/octet-stream')
-            async with session.post(url_upload, headers=headers_upload, data=data) as resp_upload:
-                text = await resp_upload.text()
-                if resp_upload.status >= 400:
-                    raise LINEOAError(f"uploadFile failed: {resp_upload.status} {text}")
-                j = await resp_upload.json()
+            with open(file_path, "rb") as file_handle:
+                data = aiohttp.FormData()
+                data.add_field(
+                    "file",
+                    file_handle,
+                    filename=os.path.basename(file_path),
+                    content_type="application/octet-stream",
+                )
+                async with session.post(url_upload, headers=headers_upload, data=data) as resp_upload:
+                    text = await resp_upload.text()
+                    if resp_upload.status >= 400:
+                        raise LINEOAError(f"uploadFile failed: {resp_upload.status} {text}")
+                    j = await resp_upload.json()
             token = j.get('contentMessageToken')
             if not token:
                 raise LINEOAError('No contentMessageToken returned')
@@ -257,13 +265,7 @@ class ChatService:
         if xsrf_token:
             headers["x-xsrf-token"] = xsrf_token
         req = session if session else requests
-        try:
-            has_cookie = 'cookie' in headers and bool(headers.get('cookie'))
-            has_xsrf = 'x-xsrf-token' in headers and bool(headers.get('x-xsrf-token'))
-            lineoa_logger.info(f"get_chats: url={url} has_cookie={has_cookie} has_xsrf={has_xsrf}")
-        except Exception:
-            pass
-        resp = req.get(url, headers=headers)
+        resp = req.get(url, headers=headers, timeout=self.request_timeout)
         if not resp.ok:
             raise LINEOAError(f"get_chat_members failed: {resp.status_code} {resp.text}")
         return resp.json()
@@ -325,7 +327,7 @@ class ChatService:
                     break
         if xsrf_token:
             headers["X-XSRF-TOKEN"] = xsrf_token
-        resp = req.get(url, headers=headers, stream=True)
+        resp = req.get(url, headers=headers, stream=True, timeout=(self.request_timeout, None))
         if resp.status_code != 200:
             lineoa_logger.error(f"[listen_messages] HTTP {resp.status_code}: {resp.text}")
             return
@@ -391,13 +393,13 @@ class ChatService:
         elif xsrf_cookie:
             headers["X-XSRF-TOKEN"] = xsrf_cookie
         else:
-            csrf_resp = req.get("https://chat.line.biz/api/v1/csrfToken", headers=headers)
+            csrf_resp = req.get("https://chat.line.biz/api/v1/csrfToken", headers=headers, timeout=self.request_timeout)
             if csrf_resp.ok:
                 csrf_json = csrf_resp.json()
                 token = csrf_json.get("token")
                 if token:
                     headers["X-XSRF-TOKEN"] = token
-        resp = req.get(url, headers=headers, params=params)
+        resp = req.get(url, headers=headers, params=params, timeout=self.request_timeout)
         if not resp.ok:
             raise LINEOAError(f"get_chat_messages failed: {resp.status_code} {resp.text}")
         return resp.json()
@@ -503,7 +505,7 @@ class ChatService:
             headers["x-xsrf-token"] = xsrf_cookie
         else:
             try:
-                csrf_resp = requests.get("https://chat.line.biz/api/v1/csrfToken", headers=headers)
+                csrf_resp = req.get("https://chat.line.biz/api/v1/csrfToken", headers=headers, timeout=self.request_timeout)
                 if csrf_resp.ok:
                     csrf_json = csrf_resp.json()
                     token = csrf_json.get("token")
@@ -511,20 +513,20 @@ class ChatService:
                         headers["x-xsrf-token"] = token
             except Exception:
                 pass
-        resp = req.get(url, headers=headers)
+        resp = req.get(url, headers=headers, timeout=self.request_timeout)
         if not resp.ok:
             raise LINEOAError(f"get_chats failed: {resp.status_code} {resp.text}")
         return resp.json()
 
-    def get_me(self) -> Dict[str, Any]:
+    def get_me(self, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """
         Get own account info.
         Returns:
             dict: Account info
         """
-        return self._get_json("https://chat.line.biz/api/v1/me")
+        return self._get_json("https://chat.line.biz/api/v1/me", session=session, xsrf_token=xsrf_token)
 
-    def get_bot_account(self, bot_id: str, no_filter: bool = True) -> Dict[str, Any]:
+    def get_bot_account(self, bot_id: str, no_filter: bool = True, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """
         Get account info for a bot.
         Args:
@@ -535,21 +537,21 @@ class ChatService:
         """
         url = f"{self.v1_BASE_URL}/bots/{bot_id}"
         params = {"noFilter": str(no_filter).lower()}
-        return self._get_json(url, params=params)
+        return self._get_json(url, session=session, xsrf_token=xsrf_token, params=params)
 
-    def get_csrf_token(self) -> Dict[str, Any]:
+    def get_csrf_token(self, session: Optional[requests.Session] = None) -> Dict[str, Any]:
         """
         Get CSRF token.
         Returns:
             dict: CSRF token info
         """
-        return self._get_json("https://chat.line.biz/api/v1/csrfToken")
+        return self._get_json("https://chat.line.biz/api/v1/csrfToken", session=session)
 
-    def get_whitelist_domains(self) -> Dict[str, Any]:
-        return self._get_json("https://chat.line.biz/api/v1/whitelistDomains")
+    def get_whitelist_domains(self, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        return self._get_json("https://chat.line.biz/api/v1/whitelistDomains", session=session, xsrf_token=xsrf_token)
 
-    def get_me_settings_pc(self) -> Dict[str, Any]:
-        return self._get_json("https://chat.line.biz/api/v1/me/settings/pc")
+    def get_me_settings_pc(self, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        return self._get_json("https://chat.line.biz/api/v1/me/settings/pc", session=session, xsrf_token=xsrf_token)
 
     def get_bot_accounts(self, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None, limit: int = 1000, no_filter: bool = True) -> Dict[str, Any]:
         """
@@ -562,7 +564,7 @@ class ChatService:
         Returns:
             dict: List of bot accounts
         """
-        url = f"https://chat.line.biz/api/v1/bots"
+        url = "https://chat.line.biz/api/v1/bots"
         params = {"limit": limit, "noFilter": str(no_filter).lower()}
         browser_headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
@@ -572,12 +574,12 @@ class ChatService:
         if xsrf_token:
             browser_headers["x-xsrf-token"] = xsrf_token
         req = session if session else requests
-        resp = req.get(url, headers=browser_headers, params=params)
+        resp = req.get(url, headers=browser_headers, params=params, timeout=self.request_timeout)
         if not resp.ok:
             raise LINEOAError(f"get_bot_accounts failed: {resp.status_code} {resp.text}")
         return resp.json()
 
-    def get_pinned_messages(self, bot_id: str, chat_id: str) -> Dict[str, Any]:
+    def get_pinned_messages(self, bot_id: str, chat_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """
         Get pinned messages in a chat.
         Args:
@@ -587,7 +589,7 @@ class ChatService:
             dict: Pinned messages
         """
         url = f"{self.v2_BASE_URL}/bots/{bot_id}/chats/{chat_id}/messages/pin"
-        return self._get_json(url)
+        return self._get_json(url, session=session, xsrf_token=xsrf_token)
 
     def get_chat(self, bot_id: str, chat_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}", session=session, xsrf_token=xsrf_token, referer=f"https://chat.line.biz/{bot_id}/chat/{chat_id}", origin="https://chat.line.biz")
@@ -647,6 +649,7 @@ class ChatService:
                 "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
                 "User-Agent": "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36",
             },
+            timeout=self.request_timeout,
         )
         if not resp.ok:
             raise LINEOAError(f"get_content_preview failed: {resp.status_code} {resp.text}")
@@ -662,6 +665,7 @@ class ChatService:
                 "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
                 "User-Agent": "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36",
             },
+            timeout=self.request_timeout,
         )
         if not resp.ok:
             raise LINEOAError(f"get_sticker_image failed: {resp.status_code} {resp.text}")
@@ -679,7 +683,7 @@ class ChatService:
             f.write(data)
         return file_path
 
-    def set_typing(self, bot_id: str, chat_id: str) -> Dict[str, Any]:
+    def set_typing(self, bot_id: str, chat_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """
         Send typing indicator to chat.
         Args:
@@ -689,14 +693,15 @@ class ChatService:
             dict: Always empty
         """
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/typing"
-        try:
-            response = requests.put(url, headers=self.headers)
-            self._handle_response(response)
-            return {}
-        except Exception as e:
-            raise LINEOAError(f"set_typing: {e}")
+        return self._put_json(
+            url,
+            session=session,
+            xsrf_token=xsrf_token,
+            origin="https://chat.line.biz",
+            referer=f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
+        )
 
-    def streaming_state(self, bot_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
+    def streaming_state(self, bot_id: str, state: Dict[str, Any], session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """
         Set streaming state for bot.
         Args:
@@ -709,12 +714,14 @@ class ChatService:
             raise LINEOAError("require state 'connectionId' and 'idle' fields")
         payload = merge_dicts({}, state)
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/streaming/state"
-        try:
-            response = requests.put(url, headers=self.headers, json=payload)
-            self._handle_response(response)
-            return {}
-        except Exception as e:
-            raise LINEOAError(f"streaming_state: {e}")
+        return self._put_json(
+            url,
+            payload=payload,
+            session=session,
+            xsrf_token=xsrf_token,
+            origin="https://chat.line.biz",
+            referer=f"https://chat.line.biz/{bot_id}/chat/",
+        )
 
     def get_streaming_api_token(self, bot_id: str, session: Optional[object] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -736,7 +743,7 @@ class ChatService:
             headers["x-xsrf-token"] = xsrf_token
         req = session if session else requests
         try:
-            response = req.post(url, headers=headers, data="")
+            response = req.post(url, headers=headers, data="", timeout=self.request_timeout)
             self._handle_response(response)
             payload = response.json()
             if "streamingApiBaseUrl" not in payload:
@@ -802,7 +809,8 @@ class ChatService:
         else:
             req = requests
         started_at = time.monotonic()
-        with req.get(base_url, headers=headers, params=params, stream=True, timeout=90) as resp:
+        stream_timeout = (self.request_timeout, max(90, ping_secs + 30))
+        with req.get(base_url, headers=headers, params=params, stream=True, timeout=stream_timeout) as resp:
             if not resp.ok:
                 raise LINEOAError(f"HTTP {resp.status_code}: {resp.text}")
             event_id = None
@@ -813,8 +821,10 @@ class ChatService:
                     break
                 if line is None:
                     continue
-                line = line.strip()
-                if line.startswith(":") or not line:
+                line = line.rstrip("\r\n")
+                if line.startswith(":"):
+                    continue
+                if not line:
                     if data_lines:
                         data = "\n".join(data_lines)
                         try:
@@ -840,6 +850,18 @@ class ChatService:
                     data_lines.append(line[5:].strip())
                 else:
                     continue
+            if data_lines:
+                data = "\n".join(data_lines)
+                try:
+                    payload = json.loads(data)
+                except Exception:
+                    payload = data
+                yield {
+                    "id": event_id,
+                    "type": event_type,
+                    "payload": payload,
+                    "time": datetime.now().strftime("%H:%M:%S.%f")[:-3],
+                }
 
     def send_message(self, bot_id: str, chat_id: str, message: Dict[str, Any], session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -890,7 +912,7 @@ class ChatService:
         browser_headers["Content-Type"] = "application/json"
         browser_headers["Referer"] = f"https://chat.line.biz/{bot_id}/chat/{chat_id}"
         browser_headers["Origin"] = "https://chat.line.biz"
-        response = req.post(url, headers=browser_headers, json=message)
+        response = req.post(url, headers=browser_headers, json=message, timeout=self.request_timeout)
         if not response.ok:
             raise LINEOAError(f"HTTP {response.status_code}: {response.text}")
         return {}
@@ -980,7 +1002,7 @@ class ChatService:
                 cookie_dict.update(req.cookies.get_dict(domain=dom))
         if cookie_dict:
             browser_headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
-        response = req.post(url, headers=browser_headers, json=payload)
+        response = req.post(url, headers=browser_headers, json=payload, timeout=self.request_timeout)
         if not response.ok:
             raise LINEOAError(f"send_flex_message failed: HTTP {response.status_code}: {response.text}")
         return {}
@@ -1026,7 +1048,7 @@ class ChatService:
                 cookie_dict.update(req.cookies.get_dict(domain=dom))
         if cookie_dict:
             headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
-        response = req.get(url, headers=headers, params=params)
+        response = req.get(url, headers=headers, params=params, timeout=self.request_timeout)
         if not response.ok:
             raise LINEOAError(f"get_flex_json failed: HTTP {response.status_code}: {response.text}")
         return response.json()
@@ -1085,7 +1107,7 @@ class ChatService:
                 cookie_dict.update(req.cookies.get_dict(domain=dom))
         if cookie_dict:
             browser_headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
-        response = req.put(url, headers=browser_headers, json=payload)
+        response = req.put(url, headers=browser_headers, json=payload, timeout=self.request_timeout)
         if not response.ok:
             raise LINEOAError(f"mark_as_read failed: HTTP {response.status_code}: {response.text}")
         return {}
@@ -1103,7 +1125,7 @@ class ChatService:
             "Accept": "application/json, text/plain, */*",
             "Content-Type": "application/json",
             "Origin": "https://manager.line.biz",
-            "Referer": f"https://manager.line.biz/",
+            "Referer": "https://manager.line.biz/",
             "Cookie": "; ".join(f"{k}={v}" for k, v in cookie_dict.items()),
         }
         if xsrf_token:
@@ -1189,7 +1211,7 @@ class ChatService:
         }
         req = session if session else requests
         headers = self._manager_headers(session, at_id, xsrf_token)
-        response = req.post(url, headers=headers, json=payload)
+        response = req.post(url, headers=headers, json=payload, timeout=self.request_timeout)
         if not response.ok:
             raise LINEOAError(f"create_card_type_message failed: HTTP {response.status_code}: {response.text}")
         card_id = response.json().get("id")
@@ -1214,7 +1236,7 @@ class ChatService:
         url = f"https://manager.line.biz/api/bots/@{at_id}/cardTypeMessages/{card_id}"
         req = session if session else requests
         headers = self._manager_headers(session, at_id, xsrf_token)
-        response = req.delete(url, headers=headers)
+        response = req.delete(url, headers=headers, timeout=self.request_timeout)
         if not response.ok:
             raise LINEOAError(f"delete_card_type_message failed: HTTP {response.status_code}: {response.text}")
 

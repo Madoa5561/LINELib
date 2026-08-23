@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+lineoa-storage.json
+id_map.json
+outputs/
+downloaded/

@@ -9,11 +9,12 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 
 class AuthService:
-	def __init__(self, channel_id: Optional[str] = None, channel_secret: Optional[str] = None, access_token: Optional[str] = None, cookie_store_path: Optional[str] = None):
+	def __init__(self, channel_id: Optional[str] = None, channel_secret: Optional[str] = None, access_token: Optional[str] = None, cookie_store_path: Optional[str] = None, request_timeout: float = 30):
 		self.channel_id = channel_id
 		self.channel_secret = channel_secret
 		self.access_token = access_token
 		self.cookie_store_path = cookie_store_path
+		self.request_timeout = request_timeout
 
 	def get_uid_map_from_at_ids(self, at_id_list: List[str], chat_service: Any) -> Dict[str, str]:
 		"""
@@ -146,7 +147,7 @@ class AuthService:
 		:return: code (authorization code) or None
 		 """
 		session = session or requests.Session()
-		xsrf_resp = session.get("https://chat.line.biz/api/v1/csrfToken")
+		xsrf_resp = session.get("https://chat.line.biz/api/v1/csrfToken", timeout=self.request_timeout)
 		xsrf_token = xsrf_resp.json().get("token")
 		login_resp = self.login_with_email(
 			email, password, recaptcha_response="", stay_logged_in=True, xsrf_token=xsrf_token, cookies=session.cookies.get_dict()
@@ -163,7 +164,7 @@ class AuthService:
 			"status": "success"
 		}
 		auth_url = "https://account.line.biz/oauth2/callback?" + urllib.parse.urlencode(params)
-		resp = session.get(auth_url, allow_redirects=False)
+		resp = session.get(auth_url, allow_redirects=False, timeout=self.request_timeout)
 		if resp.status_code == 302 and "location" in resp.headers:
 			loc = resp.headers["location"]
 			parsed = urllib.parse.urlparse(loc)
@@ -203,7 +204,7 @@ class AuthService:
 			"stayLoggedIn": stay_logged_in
 		}
 		try:
-			response = requests.post(url, headers=headers, json=payload, cookies=cookies)
+			response = requests.post(url, headers=headers, json=payload, cookies=cookies, timeout=self.request_timeout)
 			response.raise_for_status()
 			return response.json()
 		except Exception as e:

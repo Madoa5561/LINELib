@@ -57,8 +57,8 @@ class SSEEvent:
         if bot_id and content_hash and message_type in {"image", "video", "file"}:
             media_url = f"https://chat-content.line.biz/bot/{bot_id}/{content_hash}/preview"
 
-        sticker_id = message.get("stickerId") or (message.get("contentProvider") or {}).get("stickerId")
-        package_id = message.get("packageId") or (message.get("contentProvider") or {}).get("packageId")
+        sticker_id = message.get("stickerId") or content_provider.get("stickerId")
+        package_id = message.get("packageId") or content_provider.get("packageId")
         audio = message.get("audio") if isinstance(message.get("audio"), dict) else {}
         file_name = message.get("fileName") or message.get("name") or content_provider.get("fileName") or content_provider.get("file_name")
         extension = None
@@ -88,7 +88,7 @@ class SSEEvent:
             "expired": message.get("expired"),
             "expired_at": message.get("expiredAt"),
             "text": message.get("text"),
-            "url": message.get("url") or message.get("linkUrl") or (message.get("contentProvider") or {}).get("url"),
+            "url": message.get("url") or message.get("linkUrl") or content_provider.get("url"),
             "title": message.get("title") or message.get("linkTitle"),
             "sticker_id": sticker_id,
             "package_id": package_id,
@@ -120,7 +120,9 @@ class SSEParser:
             if line is None:
                 continue
             line = line.rstrip("\r\n")
-            if line.startswith(":") or line == "":
+            if line.startswith(":"):
+                continue
+            if line == "":
                 event = build_event()
                 if event is not None:
                     yield event

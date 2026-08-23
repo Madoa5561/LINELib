@@ -4,6 +4,9 @@ LINE Official Account の `chat.line.biz` / `manager.line.biz` を Python から
 
 この README は、今の実装に合わせた使い方のドキュメントとして読めるように整理しています。
 
+> [!IMPORTANT]
+> LINEヤフー株式会社の公式SDKではありません。管理画面の内部APIに依存するため、予告なく動かなくなる可能性があります。自分が管理権限を持つOfficial Accountで利用してください。
+
 ## 概要
 
 LINELib でできること:
@@ -17,6 +20,8 @@ LINELib でできること:
 - 管理系 API の取得
 
 ## インストール
+
+Python 3.10 以上が必要です。
 
 ```bash
 pip install lineoa
@@ -40,7 +45,9 @@ from LINELib import LineBot
 bot = LineBot(cookie_path="lineoa-storage.json")
 ```
 
-Cookie がない場合は `email` / `password` を渡してログインを試みます。
+`lineoa-storage.json`にはログインCookieが平文で保存されます。Gitへcommitしたり、第三者と共有したりしないでください。
+
+Cookie がない場合は `email` / `password` を渡してブラウザログインを開始します。Chrome が開くため、画面上で2段階認証などを完了してください。
 
 ```python
 bot = LineBot(
@@ -122,7 +129,7 @@ def on_media(event):
 bot.listen(botid="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 ```
 
-### 非同期実行
+### バックグラウンド実行
 
 ```python
 thread = bot.listen(botid="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", block=False)
@@ -177,10 +184,9 @@ bot.save_image_preview(
 ### ステッカー画像を直接保存
 
 ```python
-bot._lib._chat_service.save_sticker_image(
+bot.save_sticker_image(
     sticker_id="123456789",
     file_path="./sticker.png",
-    session=bot._session,
 )
 ```
 
@@ -220,6 +226,7 @@ print(normalized.get("media_url"))
 - `link`
 - `sticker`
 - `audio`
+- `text`
 - `unknown`
 
 ## 管理系 API
@@ -263,6 +270,7 @@ bot.get_plugins(bot_id)
 | `normalize_message_event(event)` | 受信イベントの正規化 |
 | `save_message_media(event, file_path)` | メディア保存 |
 | `save_image_preview(bot_id, content_hash, file_path)` | 画像プレビュー保存 |
+| `save_sticker_image(sticker_id, file_path)` | ステッカー画像保存 |
 
 ### `ChatService`
 
@@ -324,7 +332,6 @@ def on_media(event):
 
 ```python
 import os
-import time
 
 from LINELib import LineBot
 
@@ -340,8 +347,6 @@ def on_message(event):
         bot.save_message_media(event, f"./outputs/{normalized['message_id']}")
 
 bot.listen(botid=BOT_ID)
-while True:
-    time.sleep(1)
 ```
 
 ### ステッカー保存
@@ -408,6 +413,8 @@ python -m unittest discover -s tests
 - `example_async.py`
 - `example_hybrid.py`
 - `example_media_save.py`
+
+`example_hybrid.py`のHTTPサーバーはローカル確認用として`127.0.0.1:6100`だけで待ち受けます。公開Webhookとして使う場合に必要な署名検証は実装していません。
 
 実行前に必要な環境変数:
 
