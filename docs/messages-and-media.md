@@ -98,7 +98,9 @@ card_id = bot.create_and_send_flex(
 print(card_id)
 ```
 
-戻り値は作成されたカードIDです。ローカルレート制限中は戻り値の型を変えず、`LINEOAError(code="rate_limited")` を送出します。`delete_after_send=True` では送信後にManager側の一時カードを削除します。送信済みメッセージを取り消す指定ではありません。`image_url` はLINE側から取得できる公開HTTPS URLを使用してください。
+戻り値は作成されたカードIDです。ローカルレート制限中は戻り値の型を変えず、`LINEOAError(code="rate_limited")` を送出します。`delete_after_send` は真偽値で指定してください。`True` では送信後にManager側の一時カードを削除しますが、送信済みメッセージを取り消す指定ではありません。
+
+送信成功後に一時カードの削除だけが失敗した場合は、`LINEOAError(code="flex_cleanup_failed")` が送出され、`details` は `{"message_sent": True, "card_id": ...}` を含みます。この場合メッセージは送信済みなので、例外を理由にそのまま再送すると重複送信になる可能性があります。`image_url` はLINE側から取得できる公開HTTPS URLを使用してください。
 
 ## Bot、チャット、履歴、メンバー
 

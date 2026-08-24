@@ -287,6 +287,8 @@ SSE読取中の通信切断は `LINEOAError` として通知されます。
 | `delete_card_type_message(at_id, card_id, ...)` | Manager APIのcardを削除 |
 | `create_and_send_flex(bot_id, at_id, chat_id, title, image_url, ..., delete_after_send=True, ...)` | 作成・送信・任意削除をまとめて実行 |
 
+Flex関連のIDとtimestampは通信前に検証されます。`delete_after_send` は真偽値のみ指定できます。送信成功後に一時カードの削除だけが失敗すると、`LINEOAError(code="flex_cleanup_failed", details={"message_sent": True, "card_id": ...})` が送出されます。メッセージ自体は送信済みなので、この例外を受けて無条件に再送しないでください。
+
 ## AuthService
 
 ### コンストラクタ

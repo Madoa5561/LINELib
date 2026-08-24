@@ -69,6 +69,23 @@ class ChatService:
         return parsed_value
 
     @staticmethod
+    def _positive_integer(value: Any, name: str) -> int:
+        if isinstance(value, bool):
+            raise LINEOAError(f"{name} must be a positive integer")
+        try:
+            parsed_value = int(value)
+            numeric_value = float(value)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise LINEOAError(f"{name} must be a positive integer") from error
+        if (
+            not math.isfinite(numeric_value)
+            or numeric_value != parsed_value
+            or parsed_value <= 0
+        ):
+            raise LINEOAError(f"{name} must be a positive integer")
+        return parsed_value
+
+    @staticmethod
     def _require_non_empty_strings(**values: Any) -> None:
         missing = [
             name
@@ -1094,6 +1111,10 @@ class ChatService:
             dict: Always empty on success
         """
         self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
+        card_type_message_id = self._positive_integer(
+            card_type_message_id,
+            "card_type_message_id",
+        )
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/messages/send"
         send_id = f"{chat_id}_{int(time.time() * 1000)}_{random.randint(1000000, 9999999)}"
         payload = {
@@ -1142,8 +1163,14 @@ class ChatService:
         Returns:
             dict: Flex JSON payload
         """
+        self._require_non_empty_strings(
+            bot_id=bot_id,
+            chat_id=chat_id,
+            message_id=message_id,
+        )
         if timestamp is None:
             timestamp = int(time.time() * 1000)
+        timestamp = self._positive_integer(timestamp, "timestamp")
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/messages/flexJson"
         params = {"timestamp": timestamp, "messageId": message_id}
         headers = self._browser_request_headers(
@@ -1177,8 +1204,14 @@ class ChatService:
         Returns:
             dict: Always empty on success
         """
+        self._require_non_empty_strings(
+            bot_id=bot_id,
+            chat_id=chat_id,
+            message_id=message_id,
+        )
         if timestamp is None:
             timestamp = int(time.time() * 1000)
+        timestamp = self._positive_integer(timestamp, "timestamp")
         url = f"{self.v2_BASE_URL}/bots/{bot_id}/chats/{chat_id}/markAsRead"
         payload = {
             "lastMessage": {
@@ -1326,7 +1359,10 @@ class ChatService:
             at_id   : Bot の @ID
             card_id : create_card_type_message で取得した ID
         """
+        self._require_non_empty_strings(at_id=at_id)
         at_id = at_id.lstrip("@")
+        self._require_non_empty_strings(at_id=at_id)
+        card_id = self._positive_integer(card_id, "card_id")
         url = f"https://manager.line.biz/api/bots/@{at_id}/cardTypeMessages/{card_id}"
         req = session if session else requests
         headers = self._manager_headers(session, at_id, xsrf_token)
@@ -1365,6 +1401,8 @@ class ChatService:
             at_id=at_id,
             chat_id=chat_id,
         )
+        if not isinstance(delete_after_send, bool):
+            raise LINEOAError("delete_after_send must be a boolean")
         card_id = self.create_card_type_message(
             at_id=at_id,
             title=title,
@@ -1378,6 +1416,7 @@ class ChatService:
             xsrf_token=xsrf_token,
         )
         lineoa_logger.info(f"create_and_send_flex: created card id={card_id}")
+        send_succeeded = False
         try:
             self.send_flex_message(
                 bot_id=bot_id,
@@ -1386,6 +1425,7 @@ class ChatService:
                 session=session,
                 xsrf_token=xsrf_token,
             )
+            send_succeeded = True
             lineoa_logger.info(f"create_and_send_flex: sent card id={card_id} to {chat_id}")
         finally:
             if delete_after_send:
@@ -1397,8 +1437,17 @@ class ChatService:
                         xsrf_token=xsrf_token,
                     )
                     lineoa_logger.info(f"create_and_send_flex: deleted card id={card_id}")
-                except Exception as e:
-                    lineoa_logger.error(f"create_and_send_flex: delete failed (card_id={card_id}): {e}")
+                except Exception as error:
+                    if send_succeeded:
+                        raise LINEOAError(
+                            "Flex message was sent, but the temporary card could not be deleted.",
+                            code="flex_cleanup_failed",
+                            details={"card_id": card_id, "message_sent": True},
+                        ) from error
+                    lineoa_logger.error(
+                        "create_and_send_flex: delete failed "
+                        f"(card_id={card_id}): {error}"
+                    )
         return card_id
 
     def _handle_response(self, response: requests.Response) -> None:

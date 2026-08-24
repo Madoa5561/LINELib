@@ -647,6 +647,8 @@ class LINELib:
             at_id=at_id,
             chat_id=chat_id,
         )
+        if not isinstance(delete_after_send, bool):
+            raise LINEOAError("delete_after_send must be a boolean")
         rate_limit_result = self._reserve_send_slot()
         if rate_limit_result:
             raise LINEOAError(

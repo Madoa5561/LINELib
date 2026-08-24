@@ -182,6 +182,103 @@ class ChatServiceTests(unittest.TestCase):
                         session=session,
                     )
 
+    def test_flex_operations_reject_invalid_ids_before_request(self):
+        service = ChatService()
+        session = Mock()
+        operations = (
+            lambda: service.get_flex_json(None, "Uchat", "message", session=session),
+            lambda: service.get_flex_json(
+                "Ubot",
+                "Uchat",
+                "message",
+                timestamp=0,
+                session=session,
+            ),
+            lambda: service.mark_as_read("Ubot", "Uchat", None, session=session),
+            lambda: service.mark_as_read(
+                "Ubot",
+                "Uchat",
+                "message",
+                timestamp=float("nan"),
+                session=session,
+            ),
+            lambda: service.send_flex_message(
+                "Ubot",
+                "Uchat",
+                True,
+                session=session,
+            ),
+            lambda: service.delete_card_type_message(None, 1, session=session),
+            lambda: service.delete_card_type_message("@bot", 0, session=session),
+        )
+
+        for operation in operations:
+            with self.subTest(operation=operation):
+                with self.assertRaises(LINEOAError):
+                    operation()
+
+        session.get.assert_not_called()
+        session.put.assert_not_called()
+        session.post.assert_not_called()
+        session.delete.assert_not_called()
+
+    def test_create_and_send_flex_reports_cleanup_failure_after_success(self):
+        service = ChatService()
+        cleanup_error = LINEOAError("delete failed")
+        service.create_card_type_message = Mock(return_value=123)
+        service.send_flex_message = Mock(return_value={})
+        service.delete_card_type_message = Mock(side_effect=cleanup_error)
+
+        with self.assertRaises(LINEOAError) as raised:
+            service.create_and_send_flex(
+                "Ubot",
+                "@bot",
+                "Uchat",
+                "title",
+                "https://example.com/image.png",
+            )
+
+        self.assertEqual("flex_cleanup_failed", raised.exception.code)
+        self.assertEqual(
+            {"card_id": 123, "message_sent": True},
+            raised.exception.details,
+        )
+        self.assertIs(cleanup_error, raised.exception.__cause__)
+
+    def test_create_and_send_flex_preserves_send_failure_when_cleanup_fails(self):
+        service = ChatService()
+        send_error = LINEOAError("send failed")
+        service.create_card_type_message = Mock(return_value=123)
+        service.send_flex_message = Mock(side_effect=send_error)
+        service.delete_card_type_message = Mock(side_effect=LINEOAError("delete failed"))
+
+        with self.assertRaises(LINEOAError) as raised:
+            service.create_and_send_flex(
+                "Ubot",
+                "@bot",
+                "Uchat",
+                "title",
+                "https://example.com/image.png",
+            )
+
+        self.assertIs(send_error, raised.exception)
+
+    def test_create_and_send_flex_rejects_non_boolean_cleanup_option(self):
+        service = ChatService()
+        service.create_card_type_message = Mock()
+
+        with self.assertRaisesRegex(LINEOAError, "boolean"):
+            service.create_and_send_flex(
+                "Ubot",
+                "@bot",
+                "Uchat",
+                "title",
+                "https://example.com/image.png",
+                delete_after_send="false",
+            )
+
+        service.create_card_type_message.assert_not_called()
+
     def test_constructor_rejects_non_finite_timeouts(self):
         invalid_options = (
             {"request_timeout": float("nan")},

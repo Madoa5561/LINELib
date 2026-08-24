@@ -235,6 +235,24 @@ class LINELibTests(unittest.TestCase):
             library._chat_service.send_mention.assert_not_called()
             library._chat_service.create_and_send_flex.assert_not_called()
 
+    def test_invalid_flex_cleanup_option_does_not_reserve_rate_limit_slot(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = make_library(Path(temp_dir) / "storage.json")
+            library._reserve_send_slot = Mock()
+
+            with self.assertRaisesRegex(linelib_module.LINEOAError, "boolean"):
+                library.create_and_send_flex(
+                    bot_id="Ubot",
+                    at_id="@bot",
+                    chat_id="Uchat",
+                    title="title",
+                    image_url="https://example.com/image.png",
+                    delete_after_send="false",
+                )
+
+            library._reserve_send_slot.assert_not_called()
+            library._chat_service.create_and_send_flex.assert_not_called()
+
     def test_rate_limit_history_supports_limits_above_twenty(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             library = make_library(Path(temp_dir) / "storage.json")
