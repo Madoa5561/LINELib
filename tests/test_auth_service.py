@@ -156,10 +156,20 @@ class AuthServiceTests(unittest.TestCase):
 
     def test_stored_session_uses_selected_browser_headers(self):
         service = AuthService()
-        session = service._session_from_storage({"cookies": []}, "msedge")
+        session = service._session_from_storage(
+            {
+                "cookies": [
+                    {"name": "line-session", "value": "line", "domain": "chat.line.biz"},
+                    {"name": "third-party", "value": "blocked", "domain": ".google.com"},
+                ]
+            },
+            "msedge",
+        )
 
         self.assertEqual(service.WINDOWS_EDGE_USER_AGENT, session.headers["User-Agent"])
         self.assertEqual(service.WINDOWS_EDGE_SEC_CH_UA, session.headers["sec-ch-ua"])
+        self.assertEqual("line", session.cookies.get("line-session", domain="chat.line.biz"))
+        self.assertNotIn("third-party", session.cookies)
 
     def test_unknown_browser_channel_is_rejected(self):
         service = AuthService()
@@ -257,6 +267,7 @@ class AuthServiceTests(unittest.TestCase):
             service = AuthService(cookie_store_path=str(storage_path))
             session = requests.Session()
             session.cookies.set("session", "value", domain="chat.line.biz")
+            session.cookies.set("recaptcha", "third-party", domain=".google.com")
 
             service._save_cookie_storage(session, "owner")
 
@@ -265,6 +276,7 @@ class AuthServiceTests(unittest.TestCase):
         self.assertEqual([1.0], stored["SendTimestamps"])
         self.assertEqual(1, stored["FinalsendTime"])
         self.assertEqual("owner", stored["user_name"])
+        self.assertEqual(["session"], [cookie["name"] for cookie in stored["cookies"]])
 
     def test_explicit_cookies_and_xsrf_are_used_for_direct_login(self):
         service = AuthService()

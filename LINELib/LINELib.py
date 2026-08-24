@@ -10,6 +10,7 @@ from .storage import read_json, update_json, write_json
 import os
 import requests
 import json
+import math
 import time
 import random
 
@@ -107,11 +108,14 @@ class LINELib:
         raw_timestamps = data.get("SendTimestamps", [])
         if not isinstance(raw_timestamps, list):
             raw_timestamps = []
-        recent = [
-            float(timestamp)
-            for timestamp in raw_timestamps
-            if isinstance(timestamp, (int, float)) and now - float(timestamp) < self._rate_limit_window
-        ]
+        recent = []
+        for timestamp in raw_timestamps:
+            if not isinstance(timestamp, (int, float)):
+                continue
+            parsed_timestamp = float(timestamp)
+            age = now - parsed_timestamp
+            if math.isfinite(parsed_timestamp) and 0 <= age < self._rate_limit_window:
+                recent.append(parsed_timestamp)
         return recent[-self._history_limit:]
 
     def _reserve_send_slot(self) -> Optional[Dict[str, Any]]:

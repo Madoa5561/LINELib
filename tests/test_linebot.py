@@ -153,6 +153,27 @@ class LineBotTests(unittest.TestCase):
         self.assertEqual("UbotA-last", bot._last_event_ids["UbotA"])
         self.assertEqual("UbotB-last", bot._last_event_ids["UbotB"])
 
+    def test_last_event_id_survives_connection_failure(self):
+        bot = make_bot({"kind": "unknown"})
+        bot._stop_event = threading.Event()
+        bot._last_event_ids = {"Ubot": "old-id"}
+        bot.device_type = ""
+        bot.client_type = "PC"
+        bot.ping_secs = 60
+        bot.reconnect_interval = 0
+        bot.max_reconnects = 0
+        bot.listen_config = Mock(max_stream_seconds=60)
+
+        def fail_after_event(**kwargs):
+            kwargs["on_event"]({"id": "new-id", "type": "chat", "payload": {}})
+            raise RuntimeError("connection lost")
+
+        bot._lib.get_streaming_api_token_and_listen_stream_events.side_effect = fail_after_event
+
+        bot._polling_loop("Ubot")
+
+        self.assertEqual("new-id", bot._last_event_ids["Ubot"])
+
 
 if __name__ == "__main__":
     unittest.main()

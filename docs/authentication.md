@@ -24,7 +24,7 @@ bot = LineBot(cookie_path="lineoa-storage.json")
 print(bot.getBots())
 ```
 
-Cookieファイルには、Cookie名・値・domain・path・有効期限などとユーザー名がJSONで保存されます。メールアドレスとパスワードは `AuthService` の保存処理では書き込みません。同じファイルにはローカル送信レート制限の時刻履歴も保存されます。
+Cookieファイルには、LINE Businessの利用に必要な `.line.biz` 配下のCookie名・値・domain・path・有効期限などとユーザー名がJSONで保存されます。reCAPTCHAなど第三者ドメインのCookie、メールアドレス、パスワードは保存しません。同じファイルにはローカル送信レート制限の時刻履歴も保存されます。
 
 Cookieはログイン権限を持つ秘密情報です。
 

@@ -43,6 +43,19 @@ class LINELibTests(unittest.TestCase):
         self.assertEqual(3, config.max_reconnects)
         self.assertEqual(120.0, config.max_stream_seconds)
 
+    def test_configs_reject_non_finite_values(self):
+        invalid_configs = (
+            lambda: RateLimitConfig(window=float("nan")),
+            lambda: RateLimitConfig(window=float("inf")),
+            lambda: ListenConfig(reconnect_interval=float("nan")),
+            lambda: ListenConfig(max_stream_seconds=float("inf")),
+        )
+
+        for create_config in invalid_configs:
+            with self.subTest(create_config=create_config):
+                with self.assertRaises(ValueError):
+                    create_config()
+
     def test_rate_limit_config_normalizes_numbers_and_rejects_non_boolean(self):
         config = RateLimitConfig(limit="3", window="2.5", enabled=True)
 
@@ -87,6 +100,18 @@ class LINELibTests(unittest.TestCase):
             library._rate_limit_window = 10
             Path(library.storage).write_text(
                 '{"cookies": [], "SendTimestamps": [50.0, 95.0]}',
+                encoding="utf-8",
+            )
+            with patch.object(linelib_module.time, "time", return_value=100.0):
+                timestamps = library.get_send_timestamps()
+
+        self.assertEqual([95.0], timestamps)
+
+    def test_rate_limit_cleanup_discards_future_timestamps(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = make_library(Path(temp_dir) / "storage.json")
+            Path(library.storage).write_text(
+                '{"cookies": [], "SendTimestamps": [95.0, 10000.0]}',
                 encoding="utf-8",
             )
             with patch.object(linelib_module.time, "time", return_value=100.0):

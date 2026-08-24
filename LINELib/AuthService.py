@@ -63,6 +63,13 @@ class AuthService:
 	def _browser_headers_for_channel(cls, browser_channel: str) -> Dict[str, str]:
 		return browser_headers_for_channel(browser_channel)
 
+	@staticmethod
+	def _is_line_business_cookie_domain(domain: Any) -> bool:
+		if not isinstance(domain, str) or not domain:
+			return False
+		normalized_domain = domain.lstrip(".").lower()
+		return normalized_domain == "line.biz" or normalized_domain.endswith(".line.biz")
+
 	def get_uid_map_from_at_ids(self, at_id_list: List[str], chat_service: Any, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, str]:
 		"""
 		Get a map from @ID list to U-ID (internal ID)
@@ -107,9 +114,13 @@ class AuthService:
 			value = cookie.get("value")
 			if not isinstance(name, str) or not isinstance(value, str):
 				continue
-			kwargs: Dict[str, Any] = {"path": cookie.get("path") or "/"}
-			if cookie.get("domain"):
-				kwargs["domain"] = cookie["domain"]
+			domain = cookie.get("domain")
+			if not self._is_line_business_cookie_domain(domain):
+				continue
+			kwargs: Dict[str, Any] = {
+				"path": cookie.get("path") or "/",
+				"domain": domain,
+			}
 			expires = cookie.get("expiry", cookie.get("expires"))
 			if isinstance(expires, (int, float)):
 				kwargs["expires"] = int(expires)
@@ -123,6 +134,8 @@ class AuthService:
 			return
 		cookies = []
 		for cookie in session.cookies:
+			if not self._is_line_business_cookie_domain(cookie.domain):
+				continue
 			item: Dict[str, Any] = {
 				"name": cookie.name,
 				"value": cookie.value,
@@ -437,13 +450,19 @@ class AuthService:
 
 				final_url = page.url
 				account_xsrf_token = captured_xsrf["value"]
-				browser_cookies = context.cookies()
+				browser_cookies = context.cookies([
+					"https://account.line.biz/",
+					self.MANAGER_URL,
+					self.CHAT_URL,
+				])
 			finally:
 				browser.close()
 
 		session = requests.Session()
 		session.headers.update(browser_headers)
 		for cookie in browser_cookies:
+			if not self._is_line_business_cookie_domain(cookie.get("domain")):
+				continue
 			cookie_args: Dict[str, Any] = {
 				"path": cookie.get("path") or "/",
 				"secure": bool(cookie.get("secure")),

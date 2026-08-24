@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import math
 from typing import Optional
 
 @dataclass(frozen=True)
@@ -8,11 +9,14 @@ class RateLimitConfig:
     enabled: bool = True
 
     def __post_init__(self):
-        limit = int(self.limit)
-        window = float(self.window)
+        try:
+            limit = int(self.limit)
+            window = float(self.window)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise ValueError("rate_limit and rate_limit_window must be finite numbers") from error
         if limit < 1:
             raise ValueError("rate_limit must be greater than 0")
-        if window <= 0:
+        if not math.isfinite(window) or window <= 0:
             raise ValueError("rate_limit_window must be greater than 0")
         if not isinstance(self.enabled, bool):
             raise ValueError("rate_limit_enabled must be a boolean")
@@ -30,17 +34,20 @@ class ListenConfig:
     max_stream_seconds: float = 82800
 
     def __post_init__(self):
-        ping_secs = int(self.ping_secs)
-        reconnect_interval = float(self.reconnect_interval)
-        max_reconnects = None if self.max_reconnects is None else int(self.max_reconnects)
-        max_stream_seconds = float(self.max_stream_seconds)
+        try:
+            ping_secs = int(self.ping_secs)
+            reconnect_interval = float(self.reconnect_interval)
+            max_reconnects = None if self.max_reconnects is None else int(self.max_reconnects)
+            max_stream_seconds = float(self.max_stream_seconds)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise ValueError("polling timing values must be finite numbers") from error
         if ping_secs < 1:
             raise ValueError("ping_secs must be greater than 0")
-        if reconnect_interval < 0:
+        if not math.isfinite(reconnect_interval) or reconnect_interval < 0:
             raise ValueError("reconnect_interval must be greater than or equal to 0")
         if max_reconnects is not None and max_reconnects < 0:
             raise ValueError("max_reconnects must be greater than or equal to 0")
-        if max_stream_seconds <= 0:
+        if not math.isfinite(max_stream_seconds) or max_stream_seconds <= 0:
             raise ValueError("max_stream_seconds must be greater than 0")
         object.__setattr__(self, "ping_secs", ping_secs)
         object.__setattr__(self, "reconnect_interval", reconnect_interval)

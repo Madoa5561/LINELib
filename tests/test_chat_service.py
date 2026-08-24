@@ -182,14 +182,16 @@ class ChatServiceTests(unittest.TestCase):
         _, kwargs = session.get.call_args
         self.assertEqual(0.02, kwargs["timeout"][0])
 
-    def test_close_stream_closes_active_response(self):
+    def test_close_stream_closes_all_active_responses(self):
         service = ChatService()
-        response = Mock()
-        service._active_stream_response = response
+        first_response = Mock()
+        second_response = Mock()
+        service._active_stream_responses.update({first_response, second_response})
 
         service._close_stream()
 
-        response.close.assert_called_once_with()
+        first_response.close.assert_called_once_with()
+        second_response.close.assert_called_once_with()
 
     def test_invalid_json_is_wrapped_as_library_error(self):
         service = ChatService()

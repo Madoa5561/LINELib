@@ -28,7 +28,7 @@ class ChatService:
         self.upload_timeout = upload_timeout
         self.browser_headers = dict(browser_headers or browser_headers_for_channel("chrome"))
         self._stream_lock = threading.Lock()
-        self._active_stream_response: Optional[requests.Response] = None
+        self._active_stream_responses: set[requests.Response] = set()
         self.headers = {
             "Content-Type": "application/json"
         }
@@ -102,11 +102,18 @@ class ChatService:
         return payload
 
     def _close_stream(self) -> None:
-        """Close the current SSE response so a polling thread can stop promptly."""
+        """Close all current SSE responses so polling threads can stop promptly."""
         with self._stream_lock:
-            response = self._active_stream_response
-        if response is not None:
-            response.close()
+            responses = tuple(self._active_stream_responses)
+        close_error = None
+        for response in responses:
+            try:
+                response.close()
+            except Exception as error:
+                if close_error is None:
+                    close_error = error
+        if close_error is not None:
+            raise close_error
 
     def _get_json(self, url: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None, params: Optional[Dict[str, Any]] = None, origin: Optional[str] = None, referer: Optional[str] = None) -> Dict[str, Any]:
         req = session if session else requests
@@ -344,7 +351,7 @@ class ChatService:
             headers["X-XSRF-TOKEN"] = xsrf_token
         with self._request("listen_messages", req.get, url, headers=headers, stream=True, timeout=(self.request_timeout, 90)) as resp:
             with self._stream_lock:
-                self._active_stream_response = resp
+                self._active_stream_responses.add(resp)
             try:
                 if resp.status_code != 200:
                     raise LINEOAError(f"listen_messages failed: HTTP {resp.status_code}")
@@ -358,8 +365,7 @@ class ChatService:
                         lineoa_logger.info(f"[SSE chat event] {data}")
             finally:
                 with self._stream_lock:
-                    if self._active_stream_response is resp:
-                        self._active_stream_response = None
+                    self._active_stream_responses.discard(resp)
 
     def get_chat_messages(self, bot_id: str, chat_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None, limit: int = 50, before: Optional[str] = None, after: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -833,7 +839,7 @@ class ChatService:
         )
         with self._request("stream_events", req.get, stream_url, headers=headers, params=params, stream=True, timeout=stream_timeout) as resp:
             with self._stream_lock:
-                self._active_stream_response = resp
+                self._active_stream_responses.add(resp)
             deadline_reached = threading.Event()
 
             def close_at_deadline() -> None:
@@ -905,8 +911,7 @@ class ChatService:
             finally:
                 deadline_timer.cancel()
                 with self._stream_lock:
-                    if self._active_stream_response is resp:
-                        self._active_stream_response = None
+                    self._active_stream_responses.discard(resp)
 
     def send_message(self, bot_id: str, chat_id: str, message: Dict[str, Any], session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """

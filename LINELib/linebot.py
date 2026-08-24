@@ -259,6 +259,9 @@ class LineBot:
         lineoa_logger.info(f"Polling start (botid={bot_id})")
 
         def _on_event(event):
+            event_id = event.get("id")
+            if event_id:
+                self._last_event_ids[bot_id] = event_id
             event_type = event.get("type")
             self.dispatch(event_type, event)
 
@@ -266,7 +269,7 @@ class LineBot:
         try:
             while not self._stop_event.is_set():
                 try:
-                    self._last_event_ids[bot_id] = self._lib.get_streaming_api_token_and_listen_stream_events(
+                    last_event_id = self._lib.get_streaming_api_token_and_listen_stream_events(
                         bot_id=bot_id,
                         device_type=self.device_type,
                         client_type=self.client_type,
@@ -276,6 +279,8 @@ class LineBot:
                         stop_event=self._stop_event.is_set,
                         max_stream_seconds=self.listen_config.max_stream_seconds,
                     )
+                    if last_event_id:
+                        self._last_event_ids[bot_id] = last_event_id
                     if self._stop_event.is_set():
                         break
                     reconnects = 0
