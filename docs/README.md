@@ -1,6 +1,6 @@
 # LINELib ドキュメント
 
-このドキュメントは、LINELib 7.7.12の実装を基準にしています。LINELibはLINEヤフー株式会社の公式SDKではなく、LINE Official Account Managerの内部APIを扱う非公式ライブラリです。APIのレスポンス形式や認証フローは予告なく変わる可能性があります。
+このドキュメントは、LINELib 7.7.14の実装を基準にしています。LINELibはLINEヤフー株式会社の公式SDKではなく、LINE Official Account Managerの内部APIを扱う非公式ライブラリです。APIのレスポンス形式や認証フローは予告なく変わる可能性があります。
 
 ## 最初に理解すること
 
