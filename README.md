@@ -191,7 +191,7 @@ thread = bot.listen(botid="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", block=False)
 import time
 time.sleep(60)
 
-bot.stop()
+bot.close()
 thread.join()
 ```
 
@@ -320,6 +320,7 @@ bot.get_plugins(bot_id)
 | `sendFile(bot_id, chat_id, file_path)` | ファイル送信 |
 | `listen(botid, block=True)` | SSE polling 開始 |
 | `stop()` | polling 停止 |
+| `close()` | polling停止後、認証済みHTTP Sessionも終了 |
 | `event(func)` | イベントハンドラ登録 |
 | `normalize_message_event(event)` | 受信イベントの正規化 |
 | `save_message_media(event, file_path)` | メディア保存 |

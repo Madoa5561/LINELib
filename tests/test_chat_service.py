@@ -236,10 +236,17 @@ class ChatServiceTests(unittest.TestCase):
 
     def test_stream_events_rejects_untrusted_base_url(self):
         service = ChatService()
-        events = service.stream_events("token", base_url="https://example.com")
+        invalid_base_urls = (
+            "https://example.com",
+            "https://chat-streaming-api.line.biz:invalid",
+            None,
+        )
 
-        with self.assertRaisesRegex(Exception, "Invalid LINE streaming"):
-            next(events)
+        for base_url in invalid_base_urls:
+            with self.subTest(base_url=base_url):
+                events = service.stream_events("token", base_url=base_url)
+                with self.assertRaisesRegex(LINEOAError, "Invalid LINE streaming"):
+                    next(events)
 
     def test_stream_events_rejects_non_finite_timing_values(self):
         invalid_options = (

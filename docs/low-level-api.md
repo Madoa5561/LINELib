@@ -63,6 +63,16 @@ lib = LINELib(
 
 `LineBot` と違い、Pollingの再接続設定は持ちません。`storage` は `LineBot.cookie_path` と同じ保存JSONです。認証引数の意味は[認証](authentication.md)、rate limitの意味は[メッセージとメディア](messages-and-media.md#ローカルレート制限)を参照してください。
 
+`LINELib` は認証済みHTTP Sessionを保持します。利用終了時は、activeなSSE接続とSessionを確実に解放するため `close()` を呼んでください。
+
+```python
+lib = LINELib(storage="lineoa-storage.json")
+try:
+    bots = lib.get_bots()
+finally:
+    lib.close()
+```
+
 ### 送信と履歴
 
 | メソッド | 内容 |

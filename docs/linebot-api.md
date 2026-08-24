@@ -145,10 +145,13 @@ LINE側の制限とは別の、ライブラリ内の安全弁です。詳しく�
 | `dispatch(event_type, event)` | `None` | 1イベントを正規化し、優先順位に従ってハンドラへ配送 |
 | `listen(botid=None, block=True)` | `Thread` または `None` | SSE Polling開始。`botid` 省略時は先頭Bot |
 | `stop()` | `None` | Polling停止フラグを設定し、必要ならlistenerをjoin |
+| `close()` | `None` | Pollingを停止し、保持している認証済みHTTP Sessionも閉じる |
 
 `dispatch()` は通常 `listen()` から内部的に呼ばれます。テストや保存イベントの再生で手動配送する場合、`event` は少なくとも `payload` を持つ辞書にしてください。
 
 イベント選択順とthread動作は[イベントとPolling](events-and-polling.md)を参照してください。
+
+`stop()` 後は同じインスタンスでPollingやAPI操作を再開できます。インスタンスを今後使わない場合は、接続資源を確実に解放するため `close()` を呼んでください。
 
 ## 主な公開属性
 

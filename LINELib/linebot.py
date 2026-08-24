@@ -344,3 +344,10 @@ class LineBot:
             or threading.current_thread() is listen_thread
         ):
             self.running = False
+
+    def close(self):
+        """Stop polling and close the authenticated HTTP session."""
+        try:
+            self.stop()
+        finally:
+            self._lib.close()

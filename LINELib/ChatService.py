@@ -881,11 +881,15 @@ class ChatService:
         if ping_secs < 1 or not math.isfinite(max_stream_seconds) or max_stream_seconds <= 0:
             raise LINEOAError("Invalid LINE streaming timing configuration")
 
-        parsed_base_url = urllib.parse.urlparse(base_url)
+        try:
+            parsed_base_url = urllib.parse.urlparse(base_url)
+            parsed_base_url_port = parsed_base_url.port
+        except (TypeError, ValueError) as error:
+            raise LINEOAError("Invalid LINE streaming API base URL") from error
         if (
             parsed_base_url.scheme != "https"
             or parsed_base_url.hostname != "chat-streaming-api.line.biz"
-            or parsed_base_url.port is not None
+            or parsed_base_url_port is not None
             or parsed_base_url.username is not None
             or parsed_base_url.password is not None
             or parsed_base_url.path not in {"", "/"}

@@ -183,6 +183,15 @@ class LineBotTests(unittest.TestCase):
         self.assertTrue(bot.running)
         bot._lib._close_stream.assert_called_once_with()
 
+    def test_close_stops_polling_and_closes_library(self):
+        bot = make_bot({"kind": "unknown"})
+        bot.stop = Mock()
+
+        bot.close()
+
+        bot.stop.assert_called_once_with()
+        bot._lib.close.assert_called_once_with()
+
     def test_last_event_id_is_scoped_per_bot(self):
         bot = make_bot({"kind": "unknown"})
         bot._stop_event = threading.Event()

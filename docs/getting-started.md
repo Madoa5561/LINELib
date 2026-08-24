@@ -131,10 +131,13 @@ def on_message(event):
     print(message.get("message_type"), message.get("text"))
 
 
-bot.listen(botid=os.environ["LINEOA_BOT_ID"])
+try:
+    bot.listen(botid=os.environ["LINEOA_BOT_ID"])
+finally:
+    bot.close()
 ```
 
-`listen()` は既定で処理をブロックし、`Ctrl+C` で停止します。イベント種別、バックグラウンド実行、再接続は[イベントとPolling](events-and-polling.md)を参照してください。
+`listen()` は既定で処理をブロックし、`Ctrl+C` で停止します。最終終了時は `close()` でPollingと認証済みHTTP Sessionの両方を閉じてください。イベント種別、バックグラウンド実行、再接続は[イベントとPolling](events-and-polling.md)を参照してください。
 
 ## 推奨する設定方法
 

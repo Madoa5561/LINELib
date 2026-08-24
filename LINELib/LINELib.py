@@ -220,6 +220,8 @@ class LINELib:
             raise LINEOAError("Invalid LINE streaming timing configuration") from error
         if not math.isfinite(max_stream_seconds) or max_stream_seconds <= 0:
             raise LINEOAError("Invalid LINE streaming timing configuration")
+        if stop_event is not None and stop_event():
+            return last_event_id
         token_info = self._chat_service.get_streaming_api_token(bot_id, session=self._session, xsrf_token=self._xsrf_token)
         streaming_api_token = token_info.get("streamingApiToken")
         if not isinstance(streaming_api_token, str) or not streaming_api_token:
@@ -238,6 +240,9 @@ class LINELib:
             if seconds_until_expiry > 0:
                 max_stream_seconds = min(max_stream_seconds, max(1.0, seconds_until_expiry - 60.0))
         connection_id = token_info.get("connectionId")
+        last_event_id = last_event_id or token_info.get("lastEventId")
+        if stop_event is not None and stop_event():
+            return last_event_id
         if isinstance(connection_id, str) and connection_id:
             self._chat_service.streaming_state(
                 bot_id=bot_id,
@@ -245,7 +250,8 @@ class LINELib:
                 session=self._session,
                 xsrf_token=self._xsrf_token,
             )
-        last_event_id = last_event_id or token_info.get("lastEventId")
+        if stop_event is not None and stop_event():
+            return last_event_id
         for event in self._chat_service.stream_events(
             streaming_api_token,
             device_type=device_type,
@@ -258,7 +264,7 @@ class LINELib:
             base_url=streaming_api_base_url,
             version=streaming_api_version,
         ):
-            if stop_event and stop_event():
+            if stop_event is not None and stop_event():
                 break
             event_id = event.get("id")
             if event_id is not None:
@@ -270,6 +276,15 @@ class LINELib:
     def _close_stream(self) -> None:
         """Close an active SSE response."""
         self._chat_service._close_stream()
+
+    def close(self) -> None:
+        """Stop active streams and close the authenticated HTTP session."""
+        try:
+            self._close_stream()
+        finally:
+            session = getattr(self, "_session", None)
+            if session is not None:
+                session.close()
 
     def get_chat_members(self, bot_id: str, chat_id: str, limit: int = 100) -> Dict[str, Any]:
         """チャットメンバー一覧取得"""

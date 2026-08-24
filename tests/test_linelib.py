@@ -306,6 +306,56 @@ class LINELibTests(unittest.TestCase):
             xsrf_token="xsrf",
         )
 
+    def test_stopped_stream_does_not_start_new_network_work(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = make_library(Path(temp_dir) / "storage.json")
+
+            last_event_id = library.get_streaming_api_token_and_listen_stream_events(
+                "Ubot",
+                last_event_id="last-id",
+                stop_event=lambda: True,
+            )
+
+        self.assertEqual("last-id", last_event_id)
+        library._chat_service.get_streaming_api_token.assert_not_called()
+        library._chat_service.streaming_state.assert_not_called()
+        library._chat_service.stream_events.assert_not_called()
+
+    def test_stop_after_token_fetch_prevents_stream_connection(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = make_library(Path(temp_dir) / "storage.json")
+            library._chat_service.get_streaming_api_token.return_value = {
+                "streamingApiToken": "stream-token",
+                "lastEventId": "server-last-id",
+            }
+            stop_checks = iter((False, True))
+
+            last_event_id = library.get_streaming_api_token_and_listen_stream_events(
+                "Ubot",
+                stop_event=lambda: next(stop_checks),
+            )
+
+        self.assertEqual("server-last-id", last_event_id)
+        library._chat_service.get_streaming_api_token.assert_called_once_with(
+            "Ubot",
+            session=library._session,
+            xsrf_token="xsrf",
+        )
+        library._chat_service.streaming_state.assert_not_called()
+        library._chat_service.stream_events.assert_not_called()
+
+    def test_close_always_closes_session_after_stream_cleanup(self):
+        library = LINELib.__new__(LINELib)
+        library._chat_service = Mock()
+        library._session = Mock()
+        library._chat_service._close_stream.side_effect = RuntimeError("close failed")
+
+        with self.assertRaisesRegex(RuntimeError, "close failed"):
+            library.close()
+
+        library._chat_service._close_stream.assert_called_once_with()
+        library._session.close.assert_called_once_with()
+
     def test_streaming_token_timing_is_normalized_and_validated(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             library = make_library(Path(temp_dir) / "storage.json")

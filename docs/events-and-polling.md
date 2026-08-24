@@ -147,13 +147,15 @@ thread = bot.listen(
 try:
     time.sleep(60)
 finally:
-    bot.stop()
+    bot.close()
     thread.join()
 ```
 
 `block=False` はdaemon `threading.Thread` を返します。`block=True` は停止まで呼出元をブロックし、戻り値は `None` です。同じ `LineBot` でPollingが動作中にもう一度 `listen()` すると `RuntimeError` になります。
 
 `stop()` は停止フラグを立て、別threadから呼ばれた場合は最大5秒joinします。ハンドラを実行しているlistener thread自身から呼んでも自己joinしません。
+
+一時的にPollingだけを止めて同じBotを再利用する場合は `stop()`、Botの利用を終えて認証済みHTTP Sessionも解放する場合は `close()` を使います。`close()` は内部で `stop()` を呼びます。
 
 ## 接続と再接続
 
