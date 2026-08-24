@@ -697,9 +697,18 @@ class LINELib:
                 raise LINEOAError(f"プロバイダー取得例外: {e}") from e
         return self._provider
 
+def _validated_object_list(items: Any, name: str) -> List[Dict[str, Any]]:
+    if not isinstance(items, list):
+        raise LINEOAError(f"{name} must be a list")
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise LINEOAError(f"{name} item at index {index} must be an object")
+    return list(items)
+
+
 class BotsInfo:
     def __init__(self, bots_list: List[Dict[str, Any]]):
-        self._bots = bots_list
+        self._bots = _validated_object_list(bots_list, "Bot account list")
     @property
     def ids(self) -> Dict[str, str]:
         result = {}
@@ -722,13 +731,21 @@ class BotsInfo:
 
 class ChatsInfo:
     def __init__(self, chats_list: List[Dict[str, Any]]):
-        self._chats = chats_list
+        self._chats = _validated_object_list(chats_list, "Chat list")
+        for index, chat in enumerate(self._chats):
+            chat_id = chat.get("chatId")
+            if not isinstance(chat_id, str) or not chat_id:
+                raise LINEOAError(
+                    f"Chat list item at index {index} must contain a chatId"
+                )
         self.group = ChatTypeIds(self._chats, "GROUP")
         self.user = ChatTypeIds(self._chats, "USER")
     def __repr__(self) -> str:
         lines = []
         for c in self._chats:
-            profile = c.get("profile", {})
+            profile = c.get("profile")
+            if not isinstance(profile, dict):
+                profile = {}
             chat_id = c.get("chatId", "unknown")
             name = profile.get("name", chat_id)
             chat_type = c.get("chatType", "")
@@ -746,7 +763,9 @@ class ChatTypeIds:
     def __repr__(self) -> str:
         lines = []
         for c in self._chats:
-            profile = c.get("profile", {})
+            profile = c.get("profile")
+            if not isinstance(profile, dict):
+                profile = {}
             chat_id = c.get("chatId", "unknown")
             name = profile.get("name", chat_id)
             lines.append(f"  {name} : {chat_id}")

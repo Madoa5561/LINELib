@@ -103,7 +103,14 @@ class AuthService:
 		 """
 		uid_map = {}
 		bot_accounts = chat_service.get_bot_accounts(session=session, xsrf_token=xsrf_token)
-		for bot in bot_accounts.get('list', []):
+		bots_list = bot_accounts.get('list', [])
+		if not isinstance(bots_list, list):
+			raise LINEOAError("Bot account list must be a list")
+		for index, bot in enumerate(bots_list):
+			if not isinstance(bot, dict):
+				raise LINEOAError(
+					f"Bot account list item at index {index} must be an object"
+				)
 			at_id = bot.get('basicSearchId')
 			u_id = bot.get('botId')
 			if at_id and u_id and at_id in at_id_list:

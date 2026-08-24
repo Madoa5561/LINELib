@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import tempfile
 import threading
 from contextlib import contextmanager
@@ -41,8 +42,10 @@ def _process_lock(path: str) -> Iterator[None]:
         lock_acquired = True
         yield
     finally:
-        try:
-            if lock_acquired:
+        active_error = sys.exc_info()[1]
+        cleanup_error = None
+        if lock_acquired:
+            try:
                 lock_file.seek(0)
                 if os.name == "nt":
                     import msvcrt
@@ -52,8 +55,15 @@ def _process_lock(path: str) -> Iterator[None]:
                     import fcntl
 
                     fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-        finally:
+            except Exception as error:
+                cleanup_error = error
+        try:
             lock_file.close()
+        except Exception as error:
+            if cleanup_error is None:
+                cleanup_error = error
+        if active_error is None and cleanup_error is not None:
+            raise cleanup_error
 
 
 @contextmanager

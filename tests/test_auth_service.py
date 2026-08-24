@@ -52,6 +52,25 @@ def mock_session():
 
 
 class AuthServiceTests(unittest.TestCase):
+    def test_uid_mapping_validates_bot_account_list_shape(self):
+        service = AuthService()
+        chat_service = Mock()
+        invalid_lists = (None, [None])
+
+        for bots_list in invalid_lists:
+            with self.subTest(bots_list=bots_list):
+                chat_service.get_bot_accounts.return_value = {"list": bots_list}
+                with self.assertRaisesRegex(LINEOAError, "Bot account list"):
+                    service.get_uid_map_from_at_ids(["@bot"], chat_service)
+
+        chat_service.get_bot_accounts.return_value = {
+            "list": [{"basicSearchId": "@bot", "botId": "Ubot"}]
+        }
+        self.assertEqual(
+            {"@bot": "Ubot"},
+            service.get_uid_map_from_at_ids(["@bot"], chat_service),
+        )
+
     def test_request_timeout_rejects_non_finite_values(self):
         for value in (float("nan"), float("inf"), 0, "invalid"):
             with self.subTest(value=value):

@@ -30,6 +30,31 @@ def make_library(storage_path):
 
 
 class LINELibTests(unittest.TestCase):
+    def test_info_objects_reject_invalid_api_lists_as_library_errors(self):
+        invalid_cases = (
+            (linelib_module.BotsInfo, None, "Bot account list"),
+            (linelib_module.BotsInfo, [None], "index 0"),
+            (linelib_module.ChatsInfo, None, "Chat list"),
+            (
+                linelib_module.ChatsInfo,
+                [{"chatType": "GROUP"}],
+                "chatId",
+            ),
+        )
+
+        for info_class, items, message in invalid_cases:
+            with self.subTest(info_class=info_class, items=items):
+                with self.assertRaisesRegex(linelib_module.LINEOAError, message):
+                    info_class(items)
+
+    def test_chat_info_repr_handles_null_profile(self):
+        chats = linelib_module.ChatsInfo(
+            [{"chatType": "USER", "chatId": "Uchat", "profile": None}]
+        )
+
+        self.assertIn("Uchat : Uchat", repr(chats))
+        self.assertIn("Uchat : Uchat", repr(chats.user))
+
     def test_listen_config_normalizes_numeric_values(self):
         config = ListenConfig(
             ping_secs="30",
