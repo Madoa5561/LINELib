@@ -295,6 +295,31 @@ class LINELibTests(unittest.TestCase):
             self.assertTrue(saved_path.exists())
             self.assertEqual("https://example.com", json.loads(saved_path.read_text(encoding="utf-8"))["url"])
 
+    def test_failed_link_metadata_save_preserves_existing_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = make_library(Path(temp_dir) / "storage.json")
+            library.normalize_message_event = Mock(
+                return_value={
+                    "message_type": "link",
+                    "message_id": "message",
+                    "bot_id": "Ubot",
+                    "chat_id": "Uchat",
+                    "title": "Example",
+                    "url": "https://example.com",
+                    "text": "Example",
+                    "timestamp": 1,
+                    "raw": object(),
+                }
+            )
+            target = Path(temp_dir) / "link.json"
+            original = '{"preserve": true}\n'
+            target.write_text(original, encoding="utf-8")
+
+            with self.assertRaises(TypeError):
+                library.save_message_media({}, str(target))
+
+            self.assertEqual(original, target.read_text(encoding="utf-8"))
+
 
 class AsyncLINELibTests(unittest.IsolatedAsyncioTestCase):
     async def test_async_send_respects_rate_limit(self):

@@ -23,6 +23,7 @@ def _process_lock(path: str) -> Iterator[None]:
     if parent:
         os.makedirs(parent, exist_ok=True)
     lock_file = open(lock_path, "a+b")
+    lock_acquired = False
     try:
         lock_file.seek(0, os.SEEK_END)
         if lock_file.tell() == 0:
@@ -37,18 +38,20 @@ def _process_lock(path: str) -> Iterator[None]:
             import fcntl
 
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        lock_acquired = True
         yield
     finally:
         try:
-            lock_file.seek(0)
-            if os.name == "nt":
-                import msvcrt
+            if lock_acquired:
+                lock_file.seek(0)
+                if os.name == "nt":
+                    import msvcrt
 
-                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
 
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
         finally:
             lock_file.close()
 

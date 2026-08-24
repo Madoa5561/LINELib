@@ -9,6 +9,7 @@ import threading
 import urllib.parse
 from datetime import datetime
 import random
+import sys
 from typing import Optional, Dict, Any, Callable, Generator, Union
 from .browser_profile import browser_headers_for_channel
 from .exceptions import LINEOAError
@@ -111,6 +112,24 @@ class ChatService:
         if not isinstance(payload, dict):
             raise LINEOAError(f"{action} failed: JSON response must be an object")
         return payload
+
+    @staticmethod
+    async def _close_owned_async_session(
+        session: aiohttp.ClientSession,
+        *,
+        suppress_errors: bool,
+    ) -> None:
+        try:
+            await session.close()
+        except Exception as error:
+            if not suppress_errors:
+                raise LINEOAError(
+                    f"Failed to close internal HTTP session: {type(error).__name__}"
+                ) from error
+            lineoa_logger.error(
+                "Failed to close internal HTTP session after an earlier error: "
+                f"{type(error).__name__}"
+            )
 
     def _close_stream(self) -> None:
         """Close all current SSE responses so polling threads can stop promptly."""
@@ -284,7 +303,10 @@ class ChatService:
             raise LINEOAError(f"async_send_file failed: {type(error).__name__}") from error
         finally:
             if own_session:
-                await session.close()
+                await self._close_owned_async_session(
+                    session,
+                    suppress_errors=sys.exc_info()[1] is not None,
+                )
 
     def get_chat_members(self, bot_id: str, chat_id: str, limit: int = 100, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -340,7 +362,10 @@ class ChatService:
             raise LINEOAError(f"async_get_chat_members failed: {type(error).__name__}") from error
         finally:
             if own_session:
-                await session.close()
+                await self._close_owned_async_session(
+                    session,
+                    suppress_errors=sys.exc_info()[1] is not None,
+                )
 
     def listen_messages(self, bot_id: str, chat_id: str, on_message: Optional[Callable[[Dict[str, Any]], None]] = None, session: Optional[requests.Session] = None) -> None:
         """
@@ -470,7 +495,10 @@ class ChatService:
             raise LINEOAError(f"async_get_chat_messages failed: {type(error).__name__}") from error
         finally:
             if own_session:
-                await session.close()
+                await self._close_owned_async_session(
+                    session,
+                    suppress_errors=sys.exc_info()[1] is not None,
+                )
 
     def get_chats(
         self,
@@ -979,7 +1007,10 @@ class ChatService:
             raise LINEOAError(f"async_send_message failed: {type(error).__name__}") from error
         finally:
             if own_session:
-                await session.close()
+                await self._close_owned_async_session(
+                    session,
+                    suppress_errors=sys.exc_info()[1] is not None,
+                )
         return {}
 
     def send_flex_message(

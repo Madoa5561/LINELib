@@ -6,7 +6,7 @@ from .exceptions import LINEOAError
 from .sse import SSEEvent
 from .config import RateLimitConfig
 from .session_utils import cookie_header_for_url, get_xsrf_token
-from .storage import read_json, update_json, write_json
+from .storage import _write_json_unlocked, read_json, update_json, write_json
 import os
 import requests
 import json
@@ -386,8 +386,7 @@ class LINELib:
                 "timestamp": normalized.get("timestamp"),
                 "raw": normalized.get("raw"),
             }
-            with open(target_path, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False, indent=2)
+            _write_json_unlocked(target_path, payload)
             return target_path
 
         if message_type == "sticker":

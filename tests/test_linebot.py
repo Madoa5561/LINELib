@@ -10,6 +10,7 @@ def make_bot(normalized):
     bot.handlers = {}
     bot._lib = Mock()
     bot._lib.normalize_message_event.return_value = normalized
+    bot._listen_lock = threading.Lock()
     return bot
 
 
@@ -22,6 +23,56 @@ class StubbornThread:
 
 
 class LineBotTests(unittest.TestCase):
+    def test_concurrent_listen_calls_start_only_one_polling_thread(self):
+        real_thread = threading.Thread
+        resolve_barrier = threading.Barrier(2)
+
+        class FakeListenThread:
+            created = []
+
+            def __init__(self, *args, **kwargs):
+                self.started = False
+                self.__class__.created.append(self)
+
+            def is_alive(self):
+                return self.started
+
+            def start(self):
+                self.started = True
+
+            def join(self, timeout=None):
+                return None
+
+        bot = make_bot({"kind": "unknown"})
+        bot._listen_thread = None
+        bot._stop_event = threading.Event()
+        bot.running = False
+        bot._polling_loop = Mock()
+
+        def resolve_bot_id(botid=None):
+            resolve_barrier.wait(timeout=2)
+            return "Ubot"
+
+        bot._resolve_bot_id = resolve_bot_id
+        results = []
+
+        def listen():
+            try:
+                results.append(bot.listen(block=False))
+            except Exception as error:
+                results.append(error)
+
+        with patch("LINELib.linebot.threading.Thread", FakeListenThread):
+            callers = [real_thread(target=listen) for _ in range(2)]
+            for caller in callers:
+                caller.start()
+            for caller in callers:
+                caller.join(timeout=3)
+
+        self.assertTrue(all(not caller.is_alive() for caller in callers))
+        self.assertEqual(1, len(FakeListenThread.created))
+        self.assertEqual(1, sum(isinstance(result, RuntimeError) for result in results))
+
     def test_interactive_login_options_are_forwarded(self):
         otp_callback = Mock(return_value="123456")
         with patch("LINELib.linebot.LINELib") as library_class:

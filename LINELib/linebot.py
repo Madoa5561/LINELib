@@ -43,6 +43,7 @@ class LineBot:
         self.max_reconnects = self.listen_config.max_reconnects
         self._stop_event = threading.Event()
         self._listen_thread = None
+        self._listen_lock = threading.Lock()
         self._last_event_ids = {}
         self._lib = LINELib(
             storage=self.cookie_path,
@@ -306,13 +307,16 @@ class LineBot:
         if self._listen_thread and self._listen_thread.is_alive():
             raise RuntimeError("Polling is already running")
         botid = self._resolve_bot_id(botid)
-        self.running = True
-        self._stop_event.clear()
-        self._listen_thread = threading.Thread(target=self._polling_loop, args=(botid,), daemon=True)
-        self._listen_thread.start()
+        with self._listen_lock:
+            if self._listen_thread and self._listen_thread.is_alive():
+                raise RuntimeError("Polling is already running")
+            self.running = True
+            self._stop_event.clear()
+            self._listen_thread = threading.Thread(target=self._polling_loop, args=(botid,), daemon=True)
+            self._listen_thread.start()
+            listen_thread = self._listen_thread
         if not block:
-            return self._listen_thread
-        listen_thread = self._listen_thread
+            return listen_thread
         try:
             while self.running:
                 listen_thread.join(1)
@@ -321,20 +325,22 @@ class LineBot:
             print("Bot stopped.")
 
     def stop(self):
-        self._stop_event.set()
+        with self._listen_lock:
+            self._stop_event.set()
+            listen_thread = self._listen_thread
         try:
             self._lib._close_stream()
         except Exception as error:
             lineoa_logger.error(f"Failed to close polling stream: {error}")
         if (
-            self._listen_thread
-            and self._listen_thread.is_alive()
-            and threading.current_thread() is not self._listen_thread
+            listen_thread
+            and listen_thread.is_alive()
+            and threading.current_thread() is not listen_thread
         ):
-            self._listen_thread.join(timeout=5)
+            listen_thread.join(timeout=5)
         if (
-            self._listen_thread is None
-            or not self._listen_thread.is_alive()
-            or threading.current_thread() is self._listen_thread
+            listen_thread is None
+            or not listen_thread.is_alive()
+            or threading.current_thread() is listen_thread
         ):
             self.running = False

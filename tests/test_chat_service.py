@@ -4,7 +4,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import requests
 
@@ -402,6 +402,32 @@ class ChatServiceTests(unittest.TestCase):
 
 
 class AsyncChatServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_session_close_error_does_not_mask_request_failure(self):
+        service = ChatService()
+        session = Mock()
+
+        class ConnectionFailureContext:
+            async def __aenter__(self):
+                raise chat_service_module.aiohttp.ClientConnectionError(
+                    "request failed"
+                )
+
+            async def __aexit__(self, exc_type, exc, traceback):
+                return False
+
+        session.post.return_value = ConnectionFailureContext()
+        session.close = AsyncMock(side_effect=OSError("close failed"))
+
+        with patch.object(chat_service_module.aiohttp, "ClientSession", return_value=session):
+            with self.assertRaises(LINEOAError) as raised:
+                await service.async_send_message("Ubot", "Uchat", {"type": "text"})
+
+        self.assertIsInstance(
+            raised.exception.__cause__,
+            chat_service_module.aiohttp.ClientConnectionError,
+        )
+        session.close.assert_awaited_once_with()
+
     async def test_python_310_async_timeouts_are_wrapped(self):
         service = ChatService()
 
