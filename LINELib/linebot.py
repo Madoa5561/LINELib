@@ -57,15 +57,23 @@ class LineBot:
             browser_channel=browser_channel,
             interactive_timeout=interactive_timeout,
         )
-        self._session = self._lib._session
-        self._xsrf_token = self._lib._xsrf_token
-        self._bot_ids = None
-        if hasattr(self._lib, "bots") and hasattr(self._lib.bots, "ids"):
-            self._bot_ids = list(self._lib.bots.ids.values())
-        if self._bot_ids:
-            lineoa_logger.login("Login success (bot account loaded)")
-        else:
-            lineoa_logger.info("Client initialized; authentication has not been verified")
+        try:
+            self._session = self._lib._session
+            self._xsrf_token = self._lib._xsrf_token
+            self._bot_ids = list(self._lib._bot_ids)
+            if self._bot_ids:
+                lineoa_logger.login("Login success (bot account loaded)")
+            else:
+                lineoa_logger.info("Login session verified; no bot account was returned")
+        except BaseException:
+            try:
+                self._lib.close()
+            except Exception as error:
+                lineoa_logger.error(
+                    "Failed to close the client after initialization failed: "
+                    f"{type(error).__name__}"
+                )
+            raise
 
     def sendMessage(self, bot_id=None, chat_id=None, text=None, quoteToken=None):
         """Send a text message to the given chat."""

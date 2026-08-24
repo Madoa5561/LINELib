@@ -100,7 +100,7 @@ class LINELibTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             storage_path = Path(temp_dir) / "storage.json"
 
-            with self.assertRaisesRegex(Exception, "cookie storage"):
+            with self.assertRaisesRegex(Exception, "cookie session"):
                 LINELib(storage=str(storage_path))
 
     def test_cookie_storage_without_usable_line_cookies_is_rejected(self):
@@ -131,7 +131,12 @@ class LINELibTests(unittest.TestCase):
                 '{"cookies": [{"name": "session", "value": "value", "domain": "chat.line.biz"}]}',
                 encoding="utf-8",
             )
-            library = LINELib(storage=str(storage_path), browser_channel="msedge")
+            with patch.object(
+                linelib_module.AuthService,
+                "_initialize_chat_session",
+                return_value=("owner", ["Ubot"]),
+            ) as initialize_session:
+                library = LINELib(storage=str(storage_path), browser_channel="msedge")
 
         self.assertIn("Edg/151.0.0.0", library._session.headers["User-Agent"])
         self.assertIn("Microsoft Edge", library._session.headers["sec-ch-ua"])
@@ -139,6 +144,9 @@ class LINELibTests(unittest.TestCase):
             library._session.headers["User-Agent"],
             library._chat_service.browser_headers["User-Agent"],
         )
+        self.assertEqual(["Ubot"], library._bot_ids)
+        initialize_session.assert_called_once()
+        library.close()
 
     def test_rate_limit_cleanup_uses_configured_window(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -32,20 +32,17 @@ class LINELib:
         self._xsrf_token = None
         if bool(email) != bool(password):
             raise ValueError("email and password must be provided together")
-        if email and password:
-            login_result = self._auth.login_with_email_and_2fa(
-                email,
-                password,
-                get_2fa_code_callback=get_2fa_code_callback,
-                interactive_login=interactive_login,
-                browser_channel=browser_channel,
-                interactive_timeout=interactive_timeout,
-            )
-            self._session = login_result.get("session")
-            self._user_info = login_result.get("user_info")
-            self._bot_ids = login_result.get("bot_ids", [])
-        else:
-            self._restore_session_from_cookie(browser_channel)
+        login_result = self._auth.login_with_email_and_2fa(
+            email,
+            password,
+            get_2fa_code_callback=get_2fa_code_callback,
+            interactive_login=interactive_login,
+            browser_channel=browser_channel,
+            interactive_timeout=interactive_timeout,
+        )
+        self._session = login_result.get("session")
+        self._user_info = login_result.get("user_info")
+        self._bot_ids = login_result.get("bot_ids", [])
         if not isinstance(self._session, requests.Session):
             raise LINEOAError("Authentication did not return a valid session")
         browser_headers = self._auth._browser_headers_for_channel(browser_channel)

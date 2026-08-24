@@ -1,7 +1,8 @@
 import threading
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
+from LINELib.exceptions import LINEOAError
 from LINELib.linebot import LineBot
 
 
@@ -100,6 +101,32 @@ class LineBotTests(unittest.TestCase):
 
         _, kwargs = library_class.call_args
         self.assertEqual("chrome", kwargs["browser_channel"])
+
+    def test_constructor_reuses_validated_bot_ids_without_refetching(self):
+        library = Mock()
+        library._bot_ids = ["Ubot"]
+        type(library).bots = PropertyMock(
+            side_effect=AssertionError("bot accounts were fetched twice")
+        )
+
+        with patch("LINELib.linebot.LINELib", return_value=library):
+            bot = LineBot()
+
+        self.assertEqual(["Ubot"], bot._bot_ids)
+        library.close.assert_not_called()
+
+    def test_constructor_failure_closes_library_without_masking_error(self):
+        library = Mock()
+        type(library)._bot_ids = PropertyMock(
+            side_effect=LINEOAError("bot id initialization failed")
+        )
+        library.close.side_effect = OSError("close failed")
+
+        with patch("LINELib.linebot.LINELib", return_value=library):
+            with self.assertRaisesRegex(LINEOAError, "bot id initialization failed"):
+                LineBot()
+
+        library.close.assert_called_once_with()
 
     def test_media_event_routes_to_on_media_with_normalized_data(self):
         normalized = {"kind": "media", "message_type": "image", "message_id": "1"}
