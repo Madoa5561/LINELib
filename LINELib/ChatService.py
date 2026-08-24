@@ -9,7 +9,6 @@ import threading
 import urllib.parse
 from datetime import datetime
 import random
-import json
 from typing import Optional, Dict, Any, Callable, Generator, Union
 from .browser_profile import browser_headers_for_channel
 from .exceptions import LINEOAError
@@ -711,13 +710,17 @@ class ChatService:
                     file.flush()
                     os.fsync(file.fileno())
             os.replace(temporary_path, target_path)
-        except Exception:
+        except Exception as error:
             if descriptor >= 0:
                 os.close(descriptor)
             try:
                 os.unlink(temporary_path)
             except OSError:
                 pass
+            if isinstance(error, requests.RequestException):
+                raise LINEOAError(
+                    f"{action} failed: {type(error).__name__}"
+                ) from error
             raise
         return file_path
 
@@ -887,53 +890,14 @@ class ChatService:
             try:
                 if not resp.ok:
                     raise LINEOAError(f"stream_events failed: HTTP {resp.status_code}")
-                event_id = None
-                event_type = None
-                data_lines = []
-                for line in resp.iter_lines(decode_unicode=True):
+                events = SSEParser.iter_events(resp.iter_lines(decode_unicode=True))
+                for event in events:
                     if time.monotonic() - started_at >= max_stream_seconds:
                         break
-                    if line is None:
-                        continue
-                    line = line.rstrip("\r\n")
-                    if line.startswith(":"):
-                        continue
-                    if not line:
-                        if data_lines:
-                            data = "\n".join(data_lines)
-                            try:
-                                payload = json.loads(data)
-                            except json.JSONDecodeError:
-                                payload = data
-                            result = {
-                                "id": event_id,
-                                "type": event_type,
-                                "payload": payload,
-                                "time": datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                            }
-                            yield result
-                            data_lines = []
-                            event_id = None
-                            event_type = None
-                        continue
-                    if line.startswith("id:"):
-                        event_id = line[3:].strip()
-                    elif line.startswith("event:"):
-                        event_type = line[6:].strip()
-                    elif line.startswith("data:"):
-                        data_lines.append(line[5:].strip())
-                    else:
-                        continue
-                if data_lines:
-                    data = "\n".join(data_lines)
-                    try:
-                        payload = json.loads(data)
-                    except json.JSONDecodeError:
-                        payload = data
                     yield {
-                        "id": event_id,
-                        "type": event_type,
-                        "payload": payload,
+                        "id": event.id,
+                        "type": event.event,
+                        "payload": event.payload,
                         "time": datetime.now().strftime("%H:%M:%S.%f")[:-3],
                     }
             except requests.RequestException as error:

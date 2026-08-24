@@ -13,7 +13,7 @@ LINELibは、LINE Official Account ManagerへログインしたCookieとXSRF tok
 5. 必要ならメールOTPを同じログインSessionで検証する
 6. `chat.line.biz` のCSRF tokenとBot一覧を取得し、成功したCookieを保存する
 
-メールアドレスとパスワードを渡さない場合、`LINELib` はCookieファイルをSessionへ復元します。Cookieファイルがない、空、形式不正、またはCookie一覧が空の場合は `LINEOAError` で初期化を中止します。`LineBot` は続けてBot一覧も取得するため、期限切れCookieなど実際の認証失敗も初期化中に通知されます。
+メールアドレスとパスワードを渡さない場合、`LINELib` はCookieファイルをSessionへ復元します。Cookieファイルがない、空、形式不正、Cookie一覧が空、または復元可能なLINE Business Cookieが1件もない場合は `LINEOAError` で初期化を中止します。メールアドレスとパスワードが指定されていれば、利用できない保存Cookieを無視して新規ログインへ進みます。`LineBot` は続けてBot一覧も取得するため、期限切れCookieなど実際の認証失敗も初期化中に通知されます。
 
 ## 保存Cookieを再利用する
 

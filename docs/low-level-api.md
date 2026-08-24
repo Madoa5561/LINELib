@@ -349,7 +349,7 @@ lines = [
 events = list(SSEParser.iter_events(lines))
 ```
 
-`iter_events(lines)` はSSEの複数data行を改行で連結し、空行で `SSEEvent` を確定します。`:` で始まるkeepalive commentは無視し、入力末尾に空行がなくても残ったeventをyieldします。
+`iter_events(lines)` は `str` またはUTF-8の `bytes` 行を受け取り、SSEの複数data行を改行で連結して空行で `SSEEvent` を確定します。`:` で始まるkeepalive commentは無視します。fieldのコロン直後にある空白は1文字だけ除去し、末尾の空白は保持します。`id` fieldを省略したeventは直前のIDを引き継ぎ、値が空の `id` fieldはIDをリセットします。終端空行がない未完了eventはyieldせず破棄します。
 
 ## 設定クラス
 

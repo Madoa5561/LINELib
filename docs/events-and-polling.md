@@ -34,7 +34,7 @@ event = {
 }
 ```
 
-`id` は再接続時の `lastEventId`、`type` はSSEのevent名、`payload` はdata行をJSONとして解析した値です。`time` は受信時にローカルで追加される時刻文字列です。LINE側のevent構造は変更される可能性があります。
+`id` は再接続時の `lastEventId`、`type` はSSEのevent名、`payload` はdata行をJSONとして解析した値です。SSE eventに `id` fieldがない場合は直前のIDを引き継ぎ、値が空の `id` fieldを受信すると保持中のIDを消去します。`time` は受信時にローカルで追加される時刻文字列です。LINE側のevent構造は変更される可能性があります。
 
 メッセージと判断できた場合、`LineBot.dispatch()` はさらに `event["normalized"]` を追加してからハンドラを呼びます。
 
@@ -168,7 +168,7 @@ finally:
 
 `max_reconnects=None` は再接続回数を制限しません。数値を指定した場合、連続した接続例外が上限を超えるとPollingを停止します。正常な接続ループを終えると失敗回数は0へ戻ります。
 
-`lastEventId` は同じ `LineBot` インスタンスの再接続で引き継がれます。プロセス終了後に永続保存はされません。
+`lastEventId` は同じ `LineBot` インスタンスの再接続で引き継がれます。サーバーから値が空の `id` fieldを受信した場合は消去されます。プロセス終了後に永続保存はされません。
 
 ## Polling設定
 

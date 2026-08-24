@@ -174,6 +174,28 @@ class LineBotTests(unittest.TestCase):
 
         self.assertEqual("new-id", bot._last_event_ids["Ubot"])
 
+    def test_empty_event_id_clears_reconnect_state(self):
+        bot = make_bot({"kind": "unknown"})
+        bot._stop_event = threading.Event()
+        bot._last_event_ids = {"Ubot": "old-id"}
+        bot.device_type = ""
+        bot.client_type = "PC"
+        bot.ping_secs = 60
+        bot.reconnect_interval = 0
+        bot.max_reconnects = None
+        bot.listen_config = Mock(max_stream_seconds=60)
+
+        def reset_event_id(**kwargs):
+            kwargs["on_event"]({"id": "", "type": "chat", "payload": {}})
+            bot._stop_event.set()
+            return None
+
+        bot._lib.get_streaming_api_token_and_listen_stream_events.side_effect = reset_event_id
+
+        bot._polling_loop("Ubot")
+
+        self.assertNotIn("Ubot", bot._last_event_ids)
+
 
 if __name__ == "__main__":
     unittest.main()

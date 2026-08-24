@@ -131,26 +131,41 @@ class AuthService:
 	def _session_from_storage(self, data: Dict[str, Any], browser_channel: str = "chrome") -> requests.Session:
 		session = requests.Session()
 		session.headers.update(self._browser_headers_for_channel(browser_channel))
+		restored_cookie_count = 0
 		for cookie in data["cookies"]:
 			if not isinstance(cookie, dict):
 				continue
 			name = cookie.get("name")
 			value = cookie.get("value")
-			if not isinstance(name, str) or not isinstance(value, str):
+			if not isinstance(name, str) or not name or not isinstance(value, str) or not value:
 				continue
 			domain = cookie.get("domain")
 			if not self._is_line_business_cookie_domain(domain):
 				continue
+			path = cookie.get("path")
+			if not isinstance(path, str) or not path.startswith("/"):
+				path = "/"
 			kwargs: Dict[str, Any] = {
-				"path": cookie.get("path") or "/",
+				"path": path,
 				"domain": domain,
 			}
 			expires = cookie.get("expiry", cookie.get("expires"))
 			if isinstance(expires, (int, float)):
+				try:
+					expires_is_finite = math.isfinite(expires)
+				except OverflowError:
+					continue
+				if not expires_is_finite or expires <= time.time():
+					continue
 				kwargs["expires"] = int(expires)
 			if isinstance(cookie.get("secure"), bool):
 				kwargs["secure"] = cookie["secure"]
 			session.cookies.set(name, value, **kwargs)
+			restored_cookie_count += 1
+		if restored_cookie_count == 0:
+			raise LINEOAError(
+				"Cookie storage does not contain any usable LINE Business cookies."
+			)
 		return session
 
 	def _save_cookie_storage(self, session: requests.Session, user_name: Optional[str]) -> None:
@@ -249,8 +264,8 @@ class AuthService:
 		"""Authenticate with saved cookies, direct HTTP, or an interactive browser."""
 		stored_data = self._load_cookie_storage()
 		if stored_data is not None:
-			stored_session = self._session_from_storage(stored_data, browser_channel)
 			try:
+				stored_session = self._session_from_storage(stored_data, browser_channel)
 				user_name, bot_ids = self._initialize_chat_session(stored_session)
 				return {
 					"session": stored_session,

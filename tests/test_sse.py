@@ -11,6 +11,44 @@ class SSETests(unittest.TestCase):
         self.assertEqual(1, len(events))
         self.assertEqual("first\nsecond", events[0].data)
 
+    def test_bytes_are_decoded_as_utf8_and_only_one_space_is_removed(self):
+        events = list(
+            SSEParser.iter_events(
+                [
+                    b"\xef\xbb\xbfid: 1",
+                    "data:  leading and trailing  ".encode("utf-8"),
+                    b"",
+                ]
+            )
+        )
+
+        self.assertEqual("1", events[0].id)
+        self.assertEqual(" leading and trailing  ", events[0].data)
+
+    def test_event_id_persists_until_an_empty_id_field_resets_it(self):
+        events = list(
+            SSEParser.iter_events(
+                [
+                    "id: 42",
+                    "data: first",
+                    "",
+                    "data: second",
+                    "",
+                    "id",
+                    "data",
+                    "",
+                ]
+            )
+        )
+
+        self.assertEqual(["42", "42", ""], [event.id for event in events])
+        self.assertEqual("", events[-1].data)
+
+    def test_incomplete_event_at_end_of_stream_is_discarded(self):
+        events = list(SSEParser.iter_events(["data: complete", "", "data: incomplete"]))
+
+        self.assertEqual(["complete"], [event.data for event in events])
+
     def test_sticker_message_is_normalized(self):
         payload = {
             "botId": "Ubot",

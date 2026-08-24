@@ -260,8 +260,11 @@ class LineBot:
 
         def _on_event(event):
             event_id = event.get("id")
-            if event_id:
-                self._last_event_ids[bot_id] = event_id
+            if event_id is not None:
+                if event_id:
+                    self._last_event_ids[bot_id] = event_id
+                else:
+                    self._last_event_ids.pop(bot_id, None)
             event_type = event.get("type")
             self.dispatch(event_type, event)
 
@@ -281,6 +284,8 @@ class LineBot:
                     )
                     if last_event_id:
                         self._last_event_ids[bot_id] = last_event_id
+                    else:
+                        self._last_event_ids.pop(bot_id, None)
                     if self._stop_event.is_set():
                         break
                     reconnects = 0

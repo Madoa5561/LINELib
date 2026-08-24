@@ -256,6 +256,62 @@ class AuthServiceTests(unittest.TestCase):
         self.assertEqual("line", session.cookies.get("line-session", domain="chat.line.biz"))
         self.assertNotIn("third-party", session.cookies)
 
+    def test_stored_session_rejects_storage_without_usable_line_cookies(self):
+        service = AuthService()
+
+        with self.assertRaisesRegex(LINEOAError, "usable LINE Business cookies"):
+            service._session_from_storage(
+                {
+                    "cookies": [
+                        {
+                            "name": "third-party",
+                            "value": "blocked",
+                            "domain": ".example.com",
+                        },
+                        {
+                            "name": "expired",
+                            "value": "blocked",
+                            "domain": "chat.line.biz",
+                            "expiry": 10**1000,
+                        },
+                    ]
+                }
+            )
+
+    def test_invalid_stored_session_falls_back_to_interactive_login(self):
+        service = AuthService()
+        expected = {"session": Mock(), "user_info": {}, "bot_ids": ["Ubot"]}
+
+        with (
+            patch.object(
+                service,
+                "_load_cookie_storage",
+                return_value={
+                    "cookies": [
+                        {
+                            "name": "third-party",
+                            "value": "blocked",
+                            "domain": ".example.com",
+                        }
+                    ]
+                },
+            ),
+            patch.object(
+                service,
+                "_login_with_interactive_browser",
+                return_value=expected,
+            ) as interactive_login,
+        ):
+            result = service.login_with_email_and_2fa(
+                "owner@example.com",
+                "test-password",
+                get_2fa_code_callback=None,
+                interactive_login=True,
+            )
+
+        self.assertIs(expected, result)
+        interactive_login.assert_called_once()
+
     def test_unknown_browser_channel_is_rejected(self):
         service = AuthService()
         with self.assertRaisesRegex(Exception, "Google Chrome or Microsoft Edge"):

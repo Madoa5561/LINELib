@@ -85,6 +85,27 @@ class FailingStreamResponse(StreamResponse):
         raise requests.ConnectionError("stream lost")
 
 
+class ByteStreamResponse(StreamResponse):
+    def iter_lines(self, decode_unicode=True):
+        return iter(
+            [
+                b"id: 1",
+                b"event: chat",
+                b'data: {"sequence": 1}',
+                b"",
+                b"event: chat",
+                b'data: {"sequence": 2}',
+                b"",
+            ]
+        )
+
+
+class InterruptedDownloadResponse(StreamResponse):
+    def iter_content(self, chunk_size):
+        yield b"partial"
+        raise requests.ConnectionError("download interrupted")
+
+
 class LegacyAsyncioTimeoutError(Exception):
     pass
 
@@ -210,6 +231,21 @@ class ChatServiceTests(unittest.TestCase):
 
         self.assertIsInstance(raised.exception.__cause__, requests.ConnectionError)
 
+    def test_stream_events_decode_bytes_and_preserve_event_id(self):
+        session = requests.Session()
+        session.get = Mock(return_value=ByteStreamResponse())
+
+        events = list(
+            ChatService().stream_events(
+                "token",
+                session=session,
+                max_stream_seconds=1,
+            )
+        )
+
+        self.assertEqual(["1", "1"], [event["id"] for event in events])
+        self.assertEqual([1, 2], [event["payload"]["sequence"] for event in events])
+
     def test_listen_messages_disconnect_is_wrapped_as_library_error(self):
         session = requests.Session()
         session.get = Mock(return_value=FailingStreamResponse())
@@ -298,6 +334,26 @@ class ChatServiceTests(unittest.TestCase):
         self.assertEqual(str(target), result)
         _, kwargs = session.get.call_args
         self.assertTrue(kwargs["stream"])
+
+    def test_download_disconnect_is_wrapped_and_partial_file_is_removed(self):
+        service = ChatService()
+        session = requests.Session()
+        session.get = Mock(return_value=InterruptedDownloadResponse())
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "media.bin"
+            with self.assertRaises(LINEOAError) as raised:
+                service.save_content_preview(
+                    "Ubot",
+                    "content-hash",
+                    str(target),
+                    session=session,
+                )
+
+            self.assertFalse(target.exists())
+            self.assertEqual([], list(Path(temp_dir).glob("*.tmp")))
+
+        self.assertIsInstance(raised.exception.__cause__, requests.ConnectionError)
 
     def test_get_me_uses_authenticated_session(self):
         service = ChatService()

@@ -223,8 +223,8 @@ class LINELib:
             if stop_event and stop_event():
                 break
             event_id = event.get("id")
-            if event_id:
-                last_event_id = event_id
+            if event_id is not None:
+                last_event_id = event_id or None
             if on_event:
                 on_event(event)
         return last_event_id

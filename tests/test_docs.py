@@ -213,6 +213,16 @@ class DocumentationTests(unittest.TestCase):
         docs_index = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"LINELib {LINELib.__version__}", docs_index)
 
+    def test_release_workflow_runs_tests_before_building(self):
+        workflow = (ROOT / ".github" / "workflows" / "python-publish.yml").read_text(
+            encoding="utf-8"
+        )
+
+        test_position = workflow.find("python -m unittest discover -v")
+        build_position = workflow.find("python -m build")
+        self.assertGreaterEqual(test_position, 0)
+        self.assertGreater(build_position, test_position)
+
 
 if __name__ == "__main__":
     unittest.main()

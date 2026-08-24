@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, Generator, Iterable, Optional
+from typing import Any, Dict, Generator, Iterable, Optional, Union
 
 
 @dataclass(frozen=True)
@@ -102,10 +102,11 @@ class SSEEvent:
 
 class SSEParser:
     @staticmethod
-    def iter_events(lines: Iterable[str]) -> Generator[SSEEvent, None, None]:
+    def iter_events(lines: Iterable[Union[str, bytes]]) -> Generator[SSEEvent, None, None]:
         event_id = None
         event_type = None
         data_lines = []
+        first_line = True
 
         def build_event():
             if not data_lines:
@@ -119,6 +120,11 @@ class SSEParser:
         for line in lines:
             if line is None:
                 continue
+            if isinstance(line, bytes):
+                line = line.decode("utf-8", errors="replace")
+            if first_line:
+                line = line.removeprefix("\ufeff")
+                first_line = False
             line = line.rstrip("\r\n")
             if line.startswith(":"):
                 continue
@@ -126,17 +132,19 @@ class SSEParser:
                 event = build_event()
                 if event is not None:
                     yield event
-                event_id = None
                 event_type = None
                 data_lines = []
                 continue
-            if line.startswith("id:"):
-                event_id = line[3:].lstrip()
-            elif line.startswith("event:"):
-                event_type = line[6:].lstrip()
-            elif line.startswith("data:"):
-                data_lines.append(line[5:].lstrip())
-
-        event = build_event()
-        if event is not None:
-            yield event
+            if ":" in line:
+                field, value = line.split(":", 1)
+                if value.startswith(" "):
+                    value = value[1:]
+            else:
+                field = line
+                value = ""
+            if field == "id" and "\x00" not in value:
+                event_id = value
+            elif field == "event":
+                event_type = value
+            elif field == "data":
+                data_lines.append(value)

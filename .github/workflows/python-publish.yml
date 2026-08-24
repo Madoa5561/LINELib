@@ -26,10 +26,15 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Install build and project dependencies
+        run: |
+          python -m pip install build .
+
+      - name: Run test suite
+        run: python -m unittest discover -v
+
       - name: Build release distributions
         run: |
-          # NOTE: put your own distribution build steps here.
-          python -m pip install build
           python -m build
 
       - name: Upload distributions

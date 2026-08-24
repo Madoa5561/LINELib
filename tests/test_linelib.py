@@ -78,6 +78,27 @@ class LINELibTests(unittest.TestCase):
             with self.assertRaisesRegex(Exception, "cookie storage"):
                 LINELib(storage=str(storage_path))
 
+    def test_cookie_storage_without_usable_line_cookies_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            storage_path = Path(temp_dir) / "storage.json"
+            storage_path.write_text(
+                json.dumps(
+                    {
+                        "cookies": [
+                            {
+                                "name": "third-party",
+                                "value": "blocked",
+                                "domain": ".example.com",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(Exception, "usable LINE Business cookies"):
+                LINELib(storage=str(storage_path))
+
     def test_cookie_restore_uses_selected_edge_headers(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             storage_path = Path(temp_dir) / "storage.json"
@@ -213,6 +234,23 @@ class LINELibTests(unittest.TestCase):
             session=library._session,
             xsrf_token="xsrf",
         )
+
+    def test_empty_stream_event_id_resets_last_event_id(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = make_library(Path(temp_dir) / "storage.json")
+            library._chat_service.get_streaming_api_token.return_value = {
+                "streamingApiToken": "stream-token",
+            }
+            library._chat_service.stream_events.return_value = [
+                {"id": "", "type": "chat", "payload": {}}
+            ]
+
+            last_event_id = library.get_streaming_api_token_and_listen_stream_events(
+                "Ubot",
+                last_event_id="old-id",
+            )
+
+        self.assertIsNone(last_event_id)
 
     def test_provider_failure_is_not_cached_as_an_empty_result(self):
         library = LINELib.__new__(LINELib)
