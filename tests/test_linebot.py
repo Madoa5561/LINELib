@@ -151,8 +151,14 @@ class LineBotTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "chat_id"):
             bot.sendMessage(text="hello")
+        with self.assertRaisesRegex(ValueError, "chat_id"):
+            bot.sendMessage(chat_id="", text="hello")
         with self.assertRaisesRegex(ValueError, "text"):
             bot.sendMessage(chat_id="Uchat")
+        with self.assertRaisesRegex(ValueError, "text"):
+            bot.sendMessage(chat_id="Uchat", text="")
+        with self.assertRaisesRegex(ValueError, "file_path"):
+            bot.sendFile(chat_id="Uchat", file_path="")
 
     def test_stop_from_listener_thread_does_not_join_itself(self):
         bot = make_bot({"kind": "unknown"})

@@ -69,17 +69,17 @@ class LineBot:
 
     def sendMessage(self, bot_id=None, chat_id=None, text=None, quoteToken=None):
         """Send a text message to the given chat."""
-        if chat_id is None:
+        if not chat_id:
             raise ValueError("chat_id is required")
-        if text is None:
+        if text is None or text == "":
             raise ValueError("text is required")
         return self._lib.sendMessage(user_id=str(chat_id), text=str(text), bot_id=bot_id, quoteToken=quoteToken)
 
     def sendFile(self, bot_id=None, chat_id=None, file_path=None):
         """Send a file to the given chat."""
-        if chat_id is None:
+        if not chat_id:
             raise ValueError("chat_id is required")
-        if file_path is None:
+        if not file_path:
             raise ValueError("file_path is required")
         return self._lib.sendFile(chat_id=str(chat_id), file_path=str(file_path), bot_id=bot_id)
 
@@ -93,13 +93,13 @@ class LineBot:
 
     def getChatMessages(self, bot_id=None, chat_id=None, limit=50, before=None, after=None):
         """Get messages for a chat."""
-        if chat_id is None:
+        if not chat_id:
             raise ValueError("chat_id is required")
         return self._lib.getMessages(bot_id=self._resolve_bot_id(bot_id), chat_id=str(chat_id), limit=limit, before=before, after=after)
 
     def getMembers(self, bot_id=None, chat_id=None, limit=100):
         """Get members for a chat."""
-        if chat_id is None:
+        if not chat_id:
             raise ValueError("chat_id is required")
         return self._lib.getMembers(bot_id=self._resolve_bot_id(bot_id), chat_id=str(chat_id), limit=limit)
 

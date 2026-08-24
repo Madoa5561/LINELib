@@ -58,6 +58,17 @@ class LINELib:
         self._chats = None
         self._provider = None
 
+    @staticmethod
+    def _require_non_empty_strings(**values: Any) -> None:
+        missing = [
+            name
+            for name, value in values.items()
+            if not isinstance(value, str) or not value
+        ]
+        if missing:
+            verb = "is" if len(missing) == 1 else "are"
+            raise LINEOAError(f"{', '.join(missing)} {verb} required")
+
     def _load_storage(self):
         try:
             return read_json(self.storage, missing={})
@@ -112,9 +123,14 @@ class LINELib:
         for timestamp in raw_timestamps:
             if not isinstance(timestamp, (int, float)):
                 continue
-            parsed_timestamp = float(timestamp)
+            try:
+                parsed_timestamp = float(timestamp)
+            except (ValueError, OverflowError):
+                continue
+            if not math.isfinite(parsed_timestamp):
+                continue
             age = now - parsed_timestamp
-            if math.isfinite(parsed_timestamp) and 0 <= age < self._rate_limit_window:
+            if 0 <= age < self._rate_limit_window:
                 recent.append(parsed_timestamp)
         return recent[-self._history_limit:]
 
@@ -421,6 +437,7 @@ class LINELib:
             bot_id = next(iter(self.bots.ids.values()), None)
         if not bot_id:
             raise LINEOAError("No bot found")
+        self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
         if not os.path.isfile(file_path):
             raise LINEOAError(f"File not found: {file_path}")
         rate_limit_result = self._reserve_send_slot()
@@ -510,6 +527,11 @@ class LINELib:
             bot_id = next(iter(self.bots.ids.values()), None)
         if not bot_id:
             raise LINEOAError("No bot found")
+        self._require_non_empty_strings(
+            bot_id=bot_id,
+            user_id=user_id,
+            context=context,
+        )
         rate_limit_result = self._reserve_send_slot()
         if rate_limit_result:
             return rate_limit_result
@@ -532,6 +554,11 @@ class LINELib:
             bot_id = next(iter(self.bots.ids.values()), None)
         if not bot_id:
             raise LINEOAError("No bot found")
+        self._require_non_empty_strings(
+            bot_id=bot_id,
+            user_id=user_id,
+            context=context,
+        )
         rate_limit_result = self._reserve_send_slot()
         if rate_limit_result:
             return rate_limit_result
@@ -547,6 +574,11 @@ class LINELib:
         """
         メンション送信（レートリミット判定あり）
         """
+        self._require_non_empty_strings(
+            bot_id=bot_id,
+            chat_id=chat_id,
+            mentionee_id=mentionee_id,
+        )
         rate_limit_result = self._reserve_send_slot()
         if rate_limit_result:
             return rate_limit_result
@@ -566,6 +598,11 @@ class LINELib:
         action_text: str = "",
         delete_after_send: bool = True,
     ) -> int:
+        self._require_non_empty_strings(
+            bot_id=bot_id,
+            at_id=at_id,
+            chat_id=chat_id,
+        )
         rate_limit_result = self._reserve_send_slot()
         if rate_limit_result:
             raise LINEOAError(
@@ -626,6 +663,7 @@ class LINELib:
             bot_id = next(iter(self.bots.ids.values()), None)
         if not bot_id:
             raise LINEOAError("No bot found")
+        self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
         if not os.path.isfile(file_path):
             raise LINEOAError(f"File not found: {file_path}")
         rate_limit_result = self._reserve_send_slot()
@@ -636,6 +674,11 @@ class LINELib:
 
     async def async_send_mention(self, bot_id: str, chat_id: str, mentionee_id: str) -> Dict[str, Any]:
         """Async wrapper for sending a mention."""
+        self._require_non_empty_strings(
+            bot_id=bot_id,
+            chat_id=chat_id,
+            mentionee_id=mentionee_id,
+        )
         rate_limit_result = self._reserve_send_slot()
         if rate_limit_result:
             return rate_limit_result

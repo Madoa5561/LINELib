@@ -45,6 +45,17 @@ class ChatService:
             raise LINEOAError(f"{name} must be a positive finite number")
         return parsed_value
 
+    @staticmethod
+    def _require_non_empty_strings(**values: Any) -> None:
+        missing = [
+            name
+            for name, value in values.items()
+            if not isinstance(value, str) or not value
+        ]
+        if missing:
+            verb = "is" if len(missing) == 1 else "are"
+            raise LINEOAError(f"{', '.join(missing)} {verb} required")
+
     def _base_headers(self) -> Dict[str, str]:
         return {
             **self.browser_headers,
@@ -172,6 +183,11 @@ class ChatService:
             Returns:
                 dict: Always empty
         """
+        self._require_non_empty_strings(
+            bot_id=bot_id,
+            chat_id=chat_id,
+            mentionee_id=mentionee_id,
+        )
         mention_text = f"@{mentionee_id} "
         payload = {
             "type": "text",
@@ -198,6 +214,7 @@ class ChatService:
         Returns:
             dict: API response
         """
+        self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
         if not os.path.isfile(file_path):
             raise LINEOAError(f"File not found: {file_path}")
         req = session if session else requests
@@ -242,6 +259,7 @@ class ChatService:
         """
         Async version of send_file using aiohttp.
         """
+        self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
         url_upload = f"https://chat.line.biz/api/v1/bots/{bot_id}/messages/{chat_id}/uploadFile"
         if not os.path.isfile(file_path):
             raise LINEOAError(f"File not found: {file_path}")
@@ -950,6 +968,7 @@ class ChatService:
         Returns:
             dict: Always empty
         """
+        self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/messages/send"
         browser_headers = self._browser_request_headers(
             Referer=f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
@@ -975,6 +994,7 @@ class ChatService:
         Async version of send_message using aiohttp.
         cookies: dict of cookie name->value to send in Cookie header.
         """
+        self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/messages/send"
         headers = self._browser_request_headers(
             Referer=f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
@@ -1032,6 +1052,7 @@ class ChatService:
         Returns:
             dict: Always empty on success
         """
+        self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/messages/send"
         send_id = f"{chat_id}_{int(time.time() * 1000)}_{random.randint(1000000, 9999999)}"
         payload = {
@@ -1288,6 +1309,11 @@ class ChatService:
         Returns:
             int: 使用した cardTypeMessageId
         """
+        self._require_non_empty_strings(
+            bot_id=bot_id,
+            at_id=at_id,
+            chat_id=chat_id,
+        )
         card_id = self.create_card_type_message(
             at_id=at_id,
             title=title,

@@ -165,6 +165,51 @@ class LINELibTests(unittest.TestCase):
 
         self.assertEqual([95.0], timestamps)
 
+    def test_rate_limit_cleanup_discards_integer_too_large_for_float(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = make_library(Path(temp_dir) / "storage.json")
+            Path(library.storage).write_text(
+                json.dumps({"cookies": [], "SendTimestamps": [10 ** 400]}),
+                encoding="utf-8",
+            )
+
+            timestamps = library.get_send_timestamps()
+            stored = json.loads(Path(library.storage).read_text(encoding="utf-8"))
+
+        self.assertEqual([], timestamps)
+        self.assertEqual([], stored["SendTimestamps"])
+
+    def test_invalid_send_values_do_not_reserve_rate_limit_slot(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = make_library(Path(temp_dir) / "storage.json")
+            file_path = Path(temp_dir) / "upload.bin"
+            file_path.write_bytes(b"payload")
+            library._reserve_send_slot = Mock()
+            operations = (
+                lambda: library.send_message("", "hello", bot_id="Ubot"),
+                lambda: library.send_message("Uchat", "", bot_id="Ubot"),
+                lambda: library.send_file("", str(file_path), bot_id="Ubot"),
+                lambda: library.send_mention("Ubot", "Uchat", ""),
+                lambda: library.create_and_send_flex(
+                    bot_id="Ubot",
+                    at_id="@bot",
+                    chat_id="",
+                    title="title",
+                    image_url="https://example.com/image.png",
+                ),
+            )
+
+            for operation in operations:
+                with self.subTest(operation=operation):
+                    with self.assertRaisesRegex(linelib_module.LINEOAError, "required"):
+                        operation()
+
+            library._reserve_send_slot.assert_not_called()
+            library._chat_service.send_message.assert_not_called()
+            library._chat_service.send_file.assert_not_called()
+            library._chat_service.send_mention.assert_not_called()
+            library._chat_service.create_and_send_flex.assert_not_called()
+
     def test_rate_limit_history_supports_limits_above_twenty(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             library = make_library(Path(temp_dir) / "storage.json")
@@ -347,6 +392,30 @@ class LINELibTests(unittest.TestCase):
 
 
 class AsyncLINELibTests(unittest.IsolatedAsyncioTestCase):
+    async def test_async_invalid_send_values_do_not_reserve_rate_limit_slot(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = make_library(Path(temp_dir) / "storage.json")
+            file_path = Path(temp_dir) / "upload.bin"
+            file_path.write_bytes(b"payload")
+            library._reserve_send_slot = Mock()
+            library._chat_service.async_send_message = AsyncMock()
+            library._chat_service.async_send_file = AsyncMock()
+            operations = (
+                lambda: library.async_send_message("", "text", bot_id="Ubot"),
+                lambda: library.async_send_message("Uchat", "", bot_id="Ubot"),
+                lambda: library.async_send_file("", str(file_path), bot_id="Ubot"),
+                lambda: library.async_send_mention("Ubot", "Uchat", ""),
+            )
+
+            for operation in operations:
+                with self.subTest(operation=operation):
+                    with self.assertRaisesRegex(linelib_module.LINEOAError, "required"):
+                        await operation()
+
+            library._reserve_send_slot.assert_not_called()
+            library._chat_service.async_send_message.assert_not_awaited()
+            library._chat_service.async_send_file.assert_not_awaited()
+
     async def test_async_send_respects_rate_limit(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             library = make_library(Path(temp_dir) / "storage.json")

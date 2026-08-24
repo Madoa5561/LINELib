@@ -57,7 +57,7 @@ bot = LineBot(
 - ファイル送信はLINE側の送信レスポンスを `dict` で返します。
 - 送信がローカルレート制限に達した場合は例外ではなく `{"ratelimit": True, "ratelimit_after": UNIX timestamp}` を返します。
 - HTTP失敗、不正レスポンス、認証失敗は原則 `LINEOAError` です。
-- 必須の `chat_id`、`text`、`file_path` がない高レベル送信は `ValueError` です。
+- 必須の `chat_id`、`text`、`file_path` が `None` または空文字の高レベル送信は `ValueError` です。
 - LINE内部API由来の辞書キーは変更される可能性があるため `.get()` で読み取ってください。
 
 ## 送信

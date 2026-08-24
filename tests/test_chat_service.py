@@ -145,6 +145,22 @@ class FakeFormData:
 
 
 class ChatServiceTests(unittest.TestCase):
+    def test_send_operations_reject_missing_ids_before_request(self):
+        service = ChatService()
+        session = Mock()
+        operations = (
+            lambda: service.send_message("", "Uchat", {}, session=session),
+            lambda: service.send_mention("Ubot", "Uchat", "", session=session),
+            lambda: service.send_flex_message("Ubot", "", 1, session=session),
+        )
+
+        for operation in operations:
+            with self.subTest(operation=operation):
+                with self.assertRaisesRegex(LINEOAError, "required"):
+                    operation()
+
+        session.post.assert_not_called()
+
     def test_constructor_rejects_non_finite_timeouts(self):
         invalid_options = (
             {"request_timeout": float("nan")},
@@ -402,6 +418,17 @@ class ChatServiceTests(unittest.TestCase):
 
 
 class AsyncChatServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_async_send_operations_reject_missing_ids_before_request(self):
+        service = ChatService()
+        session = FakeAioSession()
+
+        with self.assertRaisesRegex(LINEOAError, "required"):
+            await service.async_send_message("Ubot", "", {}, session=session)
+        with self.assertRaisesRegex(LINEOAError, "required"):
+            await service.async_send_file("", "Uchat", "missing.bin", session=session)
+
+        self.assertEqual([], session.calls)
+
     async def test_session_close_error_does_not_mask_request_failure(self):
         service = ChatService()
         session = Mock()
