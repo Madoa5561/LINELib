@@ -8,7 +8,7 @@ version = "7.7.12"
 description = "LINE Official User API wrapper library for Python"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "MIT"
+license = { file = "LICENSE" }
 authors = [
   { name = "madoa5561" }
 ]

@@ -104,7 +104,7 @@ lib = LINELib(
 |---|---|
 | `get_bots()` | `BotsInfo` を返す |
 | `get_chats(bot_id, limit)` | チャット一覧の生JSON |
-| `get_chat_members(bot_id=None, chat_id=None, limit=100)` | メンバー一覧 |
+| `get_chat_members(bot_id, chat_id, limit=100)` | メンバー一覧。`bot_id` と `chat_id` は必須 |
 | `get_me()` | ログイン利用者 |
 | `get_bot_account(bot_id, no_filter=True)` | Bot情報 |
 | `get_csrf_token()` | CSRF endpointのJSON |
@@ -137,6 +137,8 @@ lib = LINELib(
 | `listen_stream_events(streaming_api_token, device_type="", client_type="PC", ping_secs=60, last_event_id=None, on_event=None, max_stream_seconds=82800, base_url="https://chat-streaming-api.line.biz", version="v2")` | 取得済みtokenで1回のSSE接続 |
 
 自動再接続loopが必要なら `LineBot.listen()` を使用してください。
+
+`ping_secs` と `max_stream_seconds` は有限の正数である必要があります。SSEの接続中に発生した通信切断も `LINEOAError` として通知されます。
 
 ### メディア
 
@@ -190,7 +192,7 @@ from LINELib import ChatService
 chat = ChatService(request_timeout=30, upload_timeout=120, browser_headers=None)
 ```
 
-`request_timeout` は通常HTTP、`upload_timeout` はファイルuploadの秒数です。`browser_headers` は省略時にWindows版Chromeのprofileを使い、`LINELib` からは選択したChrome / Edge profileが自動で渡されます。
+`request_timeout` は通常HTTP、`upload_timeout` はファイルuploadの秒数で、どちらも有限の正数が必要です。`browser_headers` は省略時にWindows版Chromeのprofileを使い、`LINELib` からは選択したChrome / Edge profileが自動で渡されます。
 
 ほとんどの同期メソッドは末尾に `session=None, xsrf_token=None` を受け取ります。変更・認証が必要なendpointでは、ログイン済み `requests.Session` と `chat.line.biz` のXSRF tokenを同じSessionから渡してください。省略時は未認証のmodule-level `requests` が使われる場合があり、通常の管理API操作には向きません。
 
@@ -287,7 +289,7 @@ auth = AuthService(
 )
 ```
 
-`cookie_store_path` はログインCookieのJSON保存先、`request_timeout` は認証HTTPの秒数です。`channel_id` / `channel_secret` / `access_token` は別系統のtoken設定用で、Official Account ManagerのCookieログインとは別物です。
+`cookie_store_path` はログインCookieのJSON保存先、`request_timeout` は認証HTTPの秒数で、有限の正数が必要です。`interactive_timeout` も同じ制約です。`channel_id` / `channel_secret` / `access_token` は別系統のtoken設定用で、Official Account ManagerのCookieログインとは別物です。
 
 ### 公開メソッド
 

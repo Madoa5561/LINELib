@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 import requests
 
 from LINELib.AuthService import AuthService
-from LINELib.exceptions import InteractiveLoginRequired
+from LINELib.exceptions import InteractiveLoginRequired, LINEOAError
 
 
 class StubResponse:
@@ -50,6 +50,27 @@ def mock_session():
 
 
 class AuthServiceTests(unittest.TestCase):
+    def test_request_timeout_rejects_non_finite_values(self):
+        for value in (float("nan"), float("inf"), 0, "invalid"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(LINEOAError, "request_timeout"):
+                    AuthService(request_timeout=value)
+
+    def test_interactive_timeout_is_validated_before_browser_start(self):
+        service = AuthService()
+
+        for value in (float("nan"), float("inf"), 0, "invalid"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(LINEOAError, "interactive_timeout"):
+                    service._login_with_interactive_browser(
+                        "owner@example.com",
+                        "test-password",
+                        None,
+                        True,
+                        "chrome",
+                        value,
+                    )
+
     def test_email_login_uses_official_http_flow_and_saves_cookies(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             storage_path = Path(temp_dir) / "lineoa-storage.json"

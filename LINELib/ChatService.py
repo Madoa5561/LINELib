@@ -1,5 +1,6 @@
 import requests
 import aiohttp
+import math
 import os
 import time
 import tempfile
@@ -24,14 +25,24 @@ class ChatService:
         self.v4_BASE_URL = "https://chat.line.biz/api/v4"
         self.manager_BASE_URL = "https://manager.line.biz/api"
         self.chat_client_version = "20240513144702"
-        self.request_timeout = request_timeout
-        self.upload_timeout = upload_timeout
+        self.request_timeout = self._positive_finite_timeout(request_timeout, "request_timeout")
+        self.upload_timeout = self._positive_finite_timeout(upload_timeout, "upload_timeout")
         self.browser_headers = dict(browser_headers or browser_headers_for_channel("chrome"))
         self._stream_lock = threading.Lock()
         self._active_stream_responses: set[requests.Response] = set()
         self.headers = {
             "Content-Type": "application/json"
         }
+
+    @staticmethod
+    def _positive_finite_timeout(value: Any, name: str) -> float:
+        try:
+            parsed_value = float(value)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise LINEOAError(f"{name} must be a positive finite number") from error
+        if not math.isfinite(parsed_value) or parsed_value <= 0:
+            raise LINEOAError(f"{name} must be a positive finite number")
+        return parsed_value
 
     def _base_headers(self) -> Dict[str, str]:
         return {
@@ -287,6 +298,8 @@ class ChatService:
         Returns:
             dict: List of chat members
         """
+        if not bot_id or not chat_id:
+            raise LINEOAError("bot_id and chat_id are required")
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/members?limit={limit}"
         headers = self._browser_request_headers(**{
             "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
@@ -303,6 +316,8 @@ class ChatService:
         return self._json_response(resp, "get_chat_members")
 
     async def async_get_chat_members(self, bot_id: str, chat_id: str, limit: int = 100, cookies: Optional[Union[Dict[str, str], str]] = None, xsrf_token: Optional[str] = None, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
+        if not bot_id or not chat_id:
+            raise LINEOAError("bot_id and chat_id are required")
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/members?limit={limit}"
         headers = self._base_headers()
         if xsrf_token:
@@ -784,9 +799,9 @@ class ChatService:
         try:
             ping_secs = int(ping_secs)
             max_stream_seconds = float(max_stream_seconds)
-        except (TypeError, ValueError) as error:
+        except (TypeError, ValueError, OverflowError) as error:
             raise LINEOAError("Invalid LINE streaming timing configuration") from error
-        if ping_secs < 1 or max_stream_seconds <= 0:
+        if ping_secs < 1 or not math.isfinite(max_stream_seconds) or max_stream_seconds <= 0:
             raise LINEOAError("Invalid LINE streaming timing configuration")
 
         parsed_base_url = urllib.parse.urlparse(base_url)
@@ -905,9 +920,11 @@ class ChatService:
                         "payload": payload,
                         "time": datetime.now().strftime("%H:%M:%S.%f")[:-3],
                     }
-            except requests.RequestException:
+            except requests.RequestException as error:
                 if not deadline_reached.is_set():
-                    raise
+                    raise LINEOAError(
+                        f"stream_events failed: {type(error).__name__}"
+                    ) from error
             finally:
                 deadline_timer.cancel()
                 with self._stream_lock:

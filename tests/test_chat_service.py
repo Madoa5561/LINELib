@@ -8,6 +8,8 @@ from unittest.mock import Mock, patch
 
 import requests
 
+from LINELib.exceptions import LINEOAError
+
 
 chat_service_module = importlib.import_module("LINELib.ChatService")
 ChatService = chat_service_module.ChatService
@@ -78,6 +80,11 @@ class DeadlineStreamResponse(StreamResponse):
         self.closed.set()
 
 
+class FailingStreamResponse(StreamResponse):
+    def iter_lines(self, decode_unicode=True):
+        raise requests.ConnectionError("stream lost")
+
+
 class FakeAioSession:
     def __init__(self):
         self.calls = []
@@ -105,6 +112,19 @@ class FakeFormData:
 
 
 class ChatServiceTests(unittest.TestCase):
+    def test_constructor_rejects_non_finite_timeouts(self):
+        invalid_options = (
+            {"request_timeout": float("nan")},
+            {"request_timeout": float("inf")},
+            {"upload_timeout": 0},
+            {"upload_timeout": "invalid"},
+        )
+
+        for options in invalid_options:
+            with self.subTest(options=options):
+                with self.assertRaises(LINEOAError):
+                    ChatService(**options)
+
     def test_streaming_state_uses_authenticated_session(self):
         service = ChatService()
         session = requests.Session()
@@ -150,6 +170,45 @@ class ChatServiceTests(unittest.TestCase):
 
         with self.assertRaisesRegex(Exception, "Invalid LINE streaming"):
             next(events)
+
+    def test_stream_events_rejects_non_finite_timing_values(self):
+        invalid_options = (
+            {"ping_secs": float("inf")},
+            {"max_stream_seconds": float("nan")},
+            {"max_stream_seconds": float("inf")},
+        )
+
+        for options in invalid_options:
+            with self.subTest(options=options):
+                session = requests.Session()
+                session.get = Mock(return_value=StreamResponse())
+                events = ChatService().stream_events("token", session=session, **options)
+
+                with self.assertRaises(LINEOAError):
+                    next(events)
+
+                session.get.assert_not_called()
+
+    def test_stream_disconnect_is_wrapped_as_library_error(self):
+        session = requests.Session()
+        session.get = Mock(return_value=FailingStreamResponse())
+
+        with self.assertRaises(LINEOAError) as raised:
+            list(ChatService().stream_events("token", session=session, max_stream_seconds=1))
+
+        self.assertIsInstance(raised.exception.__cause__, requests.ConnectionError)
+
+    def test_get_chat_members_rejects_missing_ids_before_request(self):
+        service = ChatService()
+        session = requests.Session()
+        session.get = Mock(return_value=SyncResponse({"list": []}))
+
+        for bot_id, chat_id in ((None, "Uchat"), ("Ubot", None), ("", "Uchat")):
+            with self.subTest(bot_id=bot_id, chat_id=chat_id):
+                with self.assertRaisesRegex(LINEOAError, "required"):
+                    service.get_chat_members(bot_id, chat_id, session=session)
+
+        session.get.assert_not_called()
 
     def test_stream_events_only_forwards_chat_domain_cookies(self):
         service = ChatService()
@@ -251,6 +310,15 @@ class ChatServiceTests(unittest.TestCase):
 
 
 class AsyncChatServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_async_get_chat_members_rejects_missing_ids(self):
+        service = ChatService()
+        session = FakeAioSession()
+
+        with self.assertRaisesRegex(LINEOAError, "required"):
+            await service.async_get_chat_members("Ubot", "", session=session)
+
+        self.assertEqual([], session.calls)
+
     async def test_async_send_file_closes_file_handle(self):
         service = ChatService()
         session = FakeAioSession()

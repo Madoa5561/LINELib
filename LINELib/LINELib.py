@@ -233,10 +233,10 @@ class LINELib:
         """Close an active SSE response."""
         self._chat_service._close_stream()
 
-    def get_chat_members(self, bot_id=None, chat_id=None, limit: int = 100) -> Dict[str, Any]:
+    def get_chat_members(self, bot_id: str, chat_id: str, limit: int = 100) -> Dict[str, Any]:
         """チャットメンバー一覧取得"""
         return self._chat_service.get_chat_members(
-            bot_id=str(bot_id), chat_id=str(chat_id), limit=limit, session=self._session, xsrf_token=self._xsrf_token
+            bot_id=bot_id, chat_id=chat_id, limit=limit, session=self._session, xsrf_token=self._xsrf_token
         )
 
     def get_me(self) -> Dict[str, Any]:

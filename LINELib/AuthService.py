@@ -1,4 +1,5 @@
 import json
+import math
 import re
 import time
 import urllib.parse
@@ -57,7 +58,17 @@ class AuthService:
 		self.channel_secret = channel_secret
 		self.access_token = access_token
 		self.cookie_store_path = cookie_store_path
-		self.request_timeout = request_timeout
+		self.request_timeout = self._positive_finite_timeout(request_timeout, "request_timeout")
+
+	@staticmethod
+	def _positive_finite_timeout(value: Any, name: str) -> float:
+		try:
+			parsed_value = float(value)
+		except (TypeError, ValueError, OverflowError) as error:
+			raise LINEOAError(f"{name} must be a positive finite number.") from error
+		if not math.isfinite(parsed_value) or parsed_value <= 0:
+			raise LINEOAError(f"{name} must be a positive finite number.")
+		return parsed_value
 
 	@classmethod
 	def _browser_headers_for_channel(cls, browser_channel: str) -> Dict[str, str]:
@@ -316,6 +327,10 @@ class AuthService:
 		return {"session": session, "user_info": {"user_name": user_name}, "bot_ids": bot_ids}
 
 	def _login_with_interactive_browser(self, email: str, password: str, get_2fa_code_callback: Optional[Callable[[], str]], stay_logged_in: bool, browser_channel: str, interactive_timeout: float) -> Dict[str, Any]:
+		interactive_timeout = self._positive_finite_timeout(
+			interactive_timeout,
+			"interactive_timeout",
+		)
 		try:
 			from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 			from playwright.sync_api import sync_playwright
@@ -324,8 +339,6 @@ class AuthService:
 				'Interactive login requires Playwright. Install it with: pip install "lineoa[interactive-login]"'
 			) from error
 
-		if interactive_timeout <= 0:
-			raise LINEOAError("interactive_timeout must be greater than zero.")
 		browser_headers = self._browser_headers_for_channel(browser_channel)
 
 		browser_cookies: List[Dict[str, Any]] = []
