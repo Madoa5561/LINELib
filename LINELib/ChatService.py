@@ -46,6 +46,29 @@ class ChatService:
         return parsed_value
 
     @staticmethod
+    def _bounded_integer(value: Any, name: str, minimum: int, maximum: int) -> int:
+        if isinstance(value, bool):
+            raise LINEOAError(
+                f"{name} must be an integer between {minimum} and {maximum}"
+            )
+        try:
+            parsed_value = int(value)
+            numeric_value = float(value)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise LINEOAError(
+                f"{name} must be an integer between {minimum} and {maximum}"
+            ) from error
+        if (
+            not math.isfinite(numeric_value)
+            or numeric_value != parsed_value
+            or not minimum <= parsed_value <= maximum
+        ):
+            raise LINEOAError(
+                f"{name} must be an integer between {minimum} and {maximum}"
+            )
+        return parsed_value
+
+    @staticmethod
     def _require_non_empty_strings(**values: Any) -> None:
         missing = [
             name
@@ -555,6 +578,8 @@ class ChatService:
         Returns:
             dict: List of chats
         """
+        self._require_non_empty_strings(bot_id=bot_id)
+        limit = self._bounded_integer(limit, "limit", 1, 25)
         url = f"https://chat.line.biz/api/v2/bots/{bot_id}/chats"
         params = {
             "folderType": folder_type,

@@ -53,10 +53,12 @@ print(accounts.ids)
 
 ```python
 bot_id = next(iter(accounts.ids.values()))
-chats = bot.getChats(bot_id=bot_id, limit=100)
+chats = bot.getChats(bot_id=bot_id, limit=25)
 for chat in chats.get("list", []):
     print(chat.get("chatId"), chat.get("profile", {}).get("name"))
 ```
+
+`getChats()` の `limit` はLINE側APIの制約により1〜25です。省略時は25件を取得します。
 
 ## 初回ログイン
 

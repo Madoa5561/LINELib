@@ -106,7 +106,7 @@ print(card_id)
 accounts = bot.getBots()
 print(accounts.ids)
 
-chats = bot.getChats(bot_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", limit=100)
+chats = bot.getChats(bot_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", limit=25)
 messages = bot.getChatMessages(
     bot_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     chat_id="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
@@ -120,7 +120,9 @@ members = bot.getMembers(
 ```
 
 - `getBots()` は `BotsInfo` を返し、`.ids` で `{basicSearchIdまたは名前: bot_id}` を取得できます。
+- `getChats()` の `limit` は1〜25で、省略時は25です。
 - `getChats()`、`getChatMessages()`、`getMembers()` はLINE内部APIのJSONを `dict` のまま返します。
+- `getMembers()` はグループチャット向けです。1対1チャットではLINE側が400を返す場合があります。
 - `before` / `after` は履歴APIへ渡すページング値です。具体的な値は直前のレスポンスに含まれる情報を使用します。
 - 内部APIの生レスポンスキーはLINE側の変更対象です。存在確認には `.get()` を使用してください。
 

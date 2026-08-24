@@ -115,8 +115,8 @@ finally:
 | メソッド | 内容 |
 |---|---|
 | `get_bots()` | `BotsInfo` を返す |
-| `get_chats(bot_id, limit)` | チャット一覧の生JSON |
-| `get_chat_members(bot_id, chat_id, limit=100)` | メンバー一覧。`bot_id` と `chat_id` は必須 |
+| `get_chats(bot_id, limit)` | チャット一覧の生JSON。`limit` は1〜25 |
+| `get_chat_members(bot_id, chat_id, limit=100)` | グループチャットのメンバー一覧。`bot_id` と `chat_id` は必須 |
 | `get_me()` | ログイン利用者 |
 | `get_bot_account(bot_id, no_filter=True)` | Bot情報 |
 | `get_csrf_token()` | CSRF endpointのJSON |
@@ -234,10 +234,10 @@ SSE読取中の通信切断は `LINEOAError` として通知されます。
 |---|---|
 | `get_bot_accounts(..., limit=1000, no_filter=True)` | Bot一覧 |
 | `get_bot_account(bot_id, no_filter=True, ...)` | Bot情報 |
-| `get_chats(bot_id, ..., folder_type="ALL", tag_ids="", auto_tag_ids="", limit=25, prioritize_pinned_chat=True)` | 条件付きチャット一覧 |
+| `get_chats(bot_id, ..., folder_type="ALL", tag_ids="", auto_tag_ids="", limit=25, prioritize_pinned_chat=True)` | 条件付きチャット一覧。`limit` は1〜25 |
 | `get_chat(bot_id, chat_id, ...)` | 1チャット |
-| `get_chat_members(bot_id, chat_id, limit=100, ...)` | メンバー |
-| `async_get_chat_members(bot_id, chat_id, limit=100, ...)` | asyncメンバー |
+| `get_chat_members(bot_id, chat_id, limit=100, ...)` | グループチャットのメンバー |
+| `async_get_chat_members(bot_id, chat_id, limit=100, ...)` | asyncグループメンバー |
 | `get_pinned_messages(bot_id, chat_id, ...)` | ピン留め |
 | `get_activities(bot_id, chat_id, limit=1, ...)` | activity |
 | `get_notes(bot_id, chat_id, limit=20, with_total=True, ...)` | note |

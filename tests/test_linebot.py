@@ -171,7 +171,7 @@ class LineBotTests(unittest.TestCase):
         result = bot.getChats()
 
         self.assertEqual({"list": []}, result)
-        bot._lib.getChats.assert_called_once_with(bot_id="Udefault", limit=100)
+        bot._lib.getChats.assert_called_once_with(bot_id="Udefault", limit=25)
 
     def test_default_bot_does_not_fall_back_to_unfiltered_accounts(self):
         bot = make_bot({"kind": "unknown"})

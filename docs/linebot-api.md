@@ -84,9 +84,9 @@ LINE側の制限とは別の、ライブラリ内の安全弁です。詳しく�
 | メソッド | 戻り値 | 内容 |
 |---|---|---|
 | `getBots()` | `BotsInfo` | 利用可能なOfficial Account一覧。`.ids` でID辞書 |
-| `getChats(bot_id=None, limit=100)` | `dict` | チャット一覧。`bot_id` 省略時は最初のチャット対応Bot |
+| `getChats(bot_id=None, limit=25)` | `dict` | チャット一覧。`limit` は1〜25。`bot_id` 省略時は最初のチャット対応Bot |
 | `getChatMessages(bot_id=None, chat_id=None, limit=50, before=None, after=None)` | `dict` | 履歴取得。`chat_id` 必須 |
-| `getMembers(bot_id=None, chat_id=None, limit=100)` | `dict` | チャットメンバー取得。`chat_id` 必須 |
+| `getMembers(bot_id=None, chat_id=None, limit=100)` | `dict` | グループチャットのメンバー取得。`chat_id` 必須 |
 
 ## 正規化・メディア
 

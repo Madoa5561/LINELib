@@ -427,7 +427,20 @@ class ChatServiceTests(unittest.TestCase):
         second_kwargs = session.get.call_args_list[1].kwargs
         self.assertEqual("https://chat.line.biz/api/v1/csrfToken", first_url)
         self.assertEqual("fresh-xsrf", second_kwargs["headers"]["x-xsrf-token"])
+        self.assertEqual(25, second_kwargs["params"]["limit"])
         self.assertEqual(12, second_kwargs["timeout"])
+
+    def test_get_chats_rejects_limits_outside_api_range_before_request(self):
+        service = ChatService()
+        session = requests.Session()
+        session.get = Mock(return_value=SyncResponse({"list": []}))
+
+        for limit in (True, 0, 26, 1.5, "invalid"):
+            with self.subTest(limit=limit):
+                with self.assertRaisesRegex(LINEOAError, "between 1 and 25"):
+                    service.get_chats("Ubot", limit=limit, session=session)
+
+        session.get.assert_not_called()
 
     def test_get_chat_messages_stops_when_csrf_request_fails(self):
         service = ChatService()

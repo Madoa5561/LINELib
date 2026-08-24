@@ -222,6 +222,13 @@ class DocumentationTests(unittest.TestCase):
         build_position = workflow.find("python -m build")
         self.assertGreaterEqual(test_position, 0)
         self.assertGreater(build_position, test_position)
+        self.assertIn("push:", workflow)
+        self.assertIn("pull_request:", workflow)
+        self.assertIn("if: github.event_name == 'release'", workflow)
+        self.assertIn("actions/checkout@v7", workflow)
+        self.assertIn("actions/setup-python@v7", workflow)
+        self.assertIn("actions/upload-artifact@v7", workflow)
+        self.assertIn("actions/download-artifact@v8", workflow)
 
 
 if __name__ == "__main__":

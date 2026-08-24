@@ -115,7 +115,7 @@ class LineBot:
         """Get available bot accounts."""
         return self._lib.get_bots()
 
-    def getChats(self, bot_id=None, limit=100):
+    def getChats(self, bot_id=None, limit=25):
         """Get chats for a bot."""
         return self._lib.getChats(bot_id=self._resolve_bot_id(bot_id), limit=limit)
 
