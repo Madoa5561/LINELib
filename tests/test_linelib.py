@@ -10,7 +10,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 linelib_module = importlib.import_module("LINELib.LINELib")
 LINELib = linelib_module.LINELib
-RateLimitConfig = importlib.import_module("LINELib.config").RateLimitConfig
+config_module = importlib.import_module("LINELib.config")
+ListenConfig = config_module.ListenConfig
+RateLimitConfig = config_module.RateLimitConfig
 
 
 def make_library(storage_path):
@@ -28,6 +30,19 @@ def make_library(storage_path):
 
 
 class LINELibTests(unittest.TestCase):
+    def test_listen_config_normalizes_numeric_values(self):
+        config = ListenConfig(
+            ping_secs="30",
+            reconnect_interval="2.5",
+            max_reconnects="3",
+            max_stream_seconds="120",
+        )
+
+        self.assertEqual(30, config.ping_secs)
+        self.assertEqual(2.5, config.reconnect_interval)
+        self.assertEqual(3, config.max_reconnects)
+        self.assertEqual(120.0, config.max_stream_seconds)
+
     def test_rate_limit_config_normalizes_numbers_and_rejects_non_boolean(self):
         config = RateLimitConfig(limit="3", window="2.5", enabled=True)
 
@@ -173,6 +188,25 @@ class LINELibTests(unittest.TestCase):
             session=library._session,
             xsrf_token="xsrf",
         )
+
+    def test_provider_failure_is_not_cached_as_an_empty_result(self):
+        library = LINELib.__new__(LINELib)
+        library._provider = None
+        library._session = Mock()
+        library._xsrf_token = "xsrf"
+        library._chat_service = Mock(request_timeout=30)
+        library._chat_service._session_headers.return_value = {}
+        failed_response = Mock(ok=False, status_code=503)
+        successful_response = Mock(ok=True)
+        successful_response.json.return_value = {"providerId": "provider"}
+        library._chat_service._request.side_effect = [failed_response, successful_response]
+
+        with self.assertRaises(linelib_module.LINEOAError):
+            _ = library.provider
+
+        self.assertIsNone(library._provider)
+        self.assertEqual({"providerId": "provider"}, library.provider)
+        self.assertEqual(2, library._chat_service._request.call_count)
 
     def test_save_link_metadata_creates_parent_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:

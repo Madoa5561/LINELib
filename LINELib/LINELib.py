@@ -686,12 +686,12 @@ class LINELib:
                 )
                 if not response.ok:
                     raise LINEOAError(f"プロバイダー取得失敗: HTTP {response.status_code}")
-                self._provider = response.json()
-                if not isinstance(self._provider, (dict, list)):
+                provider = response.json()
+                if not isinstance(provider, (dict, list)):
                     raise LINEOAError("プロバイダー取得失敗: JSON response is invalid")
+                self._provider = provider
             except Exception as e:
-                self._provider = []
-                raise LINEOAError(f"プロバイダー取得例外: {e}")
+                raise LINEOAError(f"プロバイダー取得例外: {e}") from e
         return self._provider
 
 class BotsInfo:

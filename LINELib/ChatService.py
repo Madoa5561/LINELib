@@ -282,7 +282,6 @@ class ChatService:
         """
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/members?limit={limit}"
         headers = self._browser_request_headers(**{
-            "accept-encoding": "gzip, deflate, br, zstd",
             "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
             "priority": "u=1, i",
             "referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
@@ -332,7 +331,6 @@ class ChatService:
         url = f"https://chat.line.biz/api/v3/bots/{bot_id}/chats/{chat_id}/events"
         headers = self._browser_request_headers(**{
             "accept": "text/event-stream",
-            "accept-encoding": "gzip, deflate, br, zstd",
             "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
             "priority": "u=1, i",
             "referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
@@ -384,7 +382,6 @@ class ChatService:
         if after is not None and str(after).isdigit():
             params["after"] = int(after)
         headers = self._browser_request_headers(**{
-            "accept-encoding": "gzip, deflate, br, zstd",
             "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
             "priority": "u=1, i",
             "referer": f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
@@ -473,7 +470,6 @@ class ChatService:
             "prioritizePinnedChat": str(prioritize_pinned_chat).lower(),
         }
         headers = self._browser_request_headers(**{
-            "accept-encoding": "gzip, deflate, br, zstd",
             "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
             "priority": "u=1, i",
             "referer": f"https://chat.line.biz/{bot_id}",
@@ -650,6 +646,7 @@ class ChatService:
         req = session if session else requests
         target_path = os.path.abspath(file_path)
         parent = os.path.dirname(target_path)
+        os.makedirs(parent, exist_ok=True)
         descriptor, temporary_path = tempfile.mkstemp(
             dir=parent,
             prefix=f".{os.path.basename(file_path)}.",
@@ -778,6 +775,14 @@ class ChatService:
         Yields:
             dict: Event data
         """
+        try:
+            ping_secs = int(ping_secs)
+            max_stream_seconds = float(max_stream_seconds)
+        except (TypeError, ValueError) as error:
+            raise LINEOAError("Invalid LINE streaming timing configuration") from error
+        if ping_secs < 1 or max_stream_seconds <= 0:
+            raise LINEOAError("Invalid LINE streaming timing configuration")
+
         parsed_base_url = urllib.parse.urlparse(base_url)
         if (
             parsed_base_url.scheme != "https"
@@ -803,7 +808,6 @@ class ChatService:
             params["lastEventId"] = last_event_id
         headers = self._browser_request_headers(**{
             "accept": "text/event-stream",
-            "accept-encoding": "gzip, deflate, br, zstd",
             "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
             "cache-control": "no-cache",
             "origin": "https://chat.line.biz",
@@ -823,10 +827,26 @@ class ChatService:
         else:
             req = requests
         started_at = time.monotonic()
-        stream_timeout = (self.request_timeout, max(90, ping_secs + 30))
+        stream_timeout = (
+            min(self.request_timeout, max_stream_seconds),
+            max(90, ping_secs + 30),
+        )
         with self._request("stream_events", req.get, stream_url, headers=headers, params=params, stream=True, timeout=stream_timeout) as resp:
             with self._stream_lock:
                 self._active_stream_response = resp
+            deadline_reached = threading.Event()
+
+            def close_at_deadline() -> None:
+                deadline_reached.set()
+                try:
+                    resp.close()
+                except Exception:
+                    return
+
+            remaining_stream_seconds = max_stream_seconds - (time.monotonic() - started_at)
+            deadline_timer = threading.Timer(max(0, remaining_stream_seconds), close_at_deadline)
+            deadline_timer.daemon = True
+            deadline_timer.start()
             try:
                 if not resp.ok:
                     raise LINEOAError(f"stream_events failed: HTTP {resp.status_code}")
@@ -879,7 +899,11 @@ class ChatService:
                         "payload": payload,
                         "time": datetime.now().strftime("%H:%M:%S.%f")[:-3],
                     }
+            except requests.RequestException:
+                if not deadline_reached.is_set():
+                    raise
             finally:
+                deadline_timer.cancel()
                 with self._stream_lock:
                     if self._active_stream_response is resp:
                         self._active_stream_response = None

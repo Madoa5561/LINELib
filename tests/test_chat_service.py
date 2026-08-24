@@ -1,5 +1,7 @@
 import importlib
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -59,6 +61,21 @@ class StreamResponse(SyncResponse):
 
     def close(self):
         return None
+
+
+class DeadlineStreamResponse(StreamResponse):
+    def __init__(self):
+        super().__init__()
+        self.closed = threading.Event()
+
+    def iter_lines(self, decode_unicode=True):
+        self.closed.wait(1)
+        if False:
+            yield None
+        raise requests.ConnectionError("stream closed")
+
+    def close(self):
+        self.closed.set()
 
 
 class FakeAioSession:
@@ -148,6 +165,22 @@ class ChatServiceTests(unittest.TestCase):
         self.assertIn("__Host-chat-ses=chat-value", kwargs["headers"]["cookie"])
         self.assertIn("XSRF-TOKEN=chat-xsrf", kwargs["headers"]["cookie"])
         self.assertNotIn("manager-xsrf", kwargs["headers"]["cookie"])
+        self.assertNotIn("accept-encoding", kwargs["headers"])
+
+    def test_stream_events_closes_response_at_max_duration(self):
+        service = ChatService()
+        session = requests.Session()
+        response = DeadlineStreamResponse()
+        session.get = Mock(return_value=response)
+
+        started_at = time.monotonic()
+        events = list(service.stream_events("token", session=session, max_stream_seconds=0.02))
+
+        self.assertEqual([], events)
+        self.assertTrue(response.closed.is_set())
+        self.assertLess(time.monotonic() - started_at, 0.5)
+        _, kwargs = session.get.call_args
+        self.assertEqual(0.02, kwargs["timeout"][0])
 
     def test_close_stream_closes_active_response(self):
         service = ChatService()
@@ -175,7 +208,7 @@ class ChatServiceTests(unittest.TestCase):
         session.get = Mock(return_value=StreamResponse(chunks=(b"first", b"second")))
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            target = Path(temp_dir) / "sticker.png"
+            target = Path(temp_dir) / "nested" / "sticker.png"
             result = service.save_sticker_image("123", str(target), session=session)
 
             self.assertEqual(b"firstsecond", target.read_bytes())
