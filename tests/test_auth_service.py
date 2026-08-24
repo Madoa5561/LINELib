@@ -300,20 +300,23 @@ class AuthServiceTests(unittest.TestCase):
     def test_invalid_stored_session_falls_back_to_interactive_login(self):
         service = AuthService()
         expected = {"session": Mock(), "user_info": {}, "bot_ids": ["Ubot"]}
+        stored_session = Mock()
 
         with (
             patch.object(
                 service,
                 "_load_cookie_storage",
-                return_value={
-                    "cookies": [
-                        {
-                            "name": "third-party",
-                            "value": "blocked",
-                            "domain": ".example.com",
-                        }
-                    ]
-                },
+                return_value={"cookies": [{"name": "stored"}]},
+            ),
+            patch.object(
+                service,
+                "_session_from_storage",
+                return_value=stored_session,
+            ),
+            patch.object(
+                service,
+                "_initialize_chat_session",
+                side_effect=LINEOAError("stored session expired"),
             ),
             patch.object(
                 service,
@@ -330,6 +333,33 @@ class AuthServiceTests(unittest.TestCase):
 
         self.assertIs(expected, result)
         interactive_login.assert_called_once()
+        stored_session.close.assert_called_once_with()
+
+    def test_unexpected_stored_session_error_closes_session_before_raise(self):
+        service = AuthService()
+        stored_session = Mock()
+
+        with (
+            patch.object(
+                service,
+                "_load_cookie_storage",
+                return_value={"cookies": [{"name": "stored"}]},
+            ),
+            patch.object(
+                service,
+                "_session_from_storage",
+                return_value=stored_session,
+            ),
+            patch.object(
+                service,
+                "_initialize_chat_session",
+                side_effect=RuntimeError("unexpected failure"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "unexpected failure"),
+        ):
+            service.login_with_email_and_2fa(None, None, None)
+
+        stored_session.close.assert_called_once_with()
 
     def test_unknown_browser_channel_is_rejected(self):
         service = AuthService()

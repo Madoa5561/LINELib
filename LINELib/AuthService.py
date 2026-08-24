@@ -83,6 +83,16 @@ class AuthService:
 		return normalized_domain == "line.biz" or normalized_domain.endswith(".line.biz")
 
 	@staticmethod
+	def _close_failed_session(session: requests.Session) -> None:
+		try:
+			session.close()
+		except Exception as error:
+			lineoa_logger.error(
+				"Failed to close an unsuccessful authentication session: "
+				f"{type(error).__name__}"
+			)
+
+	@staticmethod
 	@contextmanager
 	def _wrap_interactive_login_errors(playwright_error: type[Exception]):
 		try:
@@ -271,6 +281,7 @@ class AuthService:
 		"""Authenticate with saved cookies, direct HTTP, or an interactive browser."""
 		stored_data = self._load_cookie_storage()
 		if stored_data is not None:
+			stored_session = None
 			try:
 				stored_session = self._session_from_storage(stored_data, browser_channel)
 				user_name, bot_ids = self._initialize_chat_session(stored_session)
@@ -280,8 +291,14 @@ class AuthService:
 					"bot_ids": bot_ids,
 				}
 			except (LINEOAError, InteractiveLoginRequired):
+				if stored_session is not None:
+					self._close_failed_session(stored_session)
 				if not email or not password:
 					raise
+			except Exception:
+				if stored_session is not None:
+					self._close_failed_session(stored_session)
+				raise
 
 		if not email or not password:
 			raise LINEOAError("Email and password are required when no valid cookie session is available.")

@@ -189,6 +189,7 @@ class LINELibTests(unittest.TestCase):
                 lambda: library.send_message("", "hello", bot_id="Ubot"),
                 lambda: library.send_message("Uchat", "", bot_id="Ubot"),
                 lambda: library.send_file("", str(file_path), bot_id="Ubot"),
+                lambda: library.send_file("Uchat", None, bot_id="Ubot"),
                 lambda: library.send_mention("Ubot", "Uchat", ""),
                 lambda: library.create_and_send_flex(
                     bot_id="Ubot",
@@ -305,6 +306,42 @@ class LINELibTests(unittest.TestCase):
             xsrf_token="xsrf",
         )
 
+    def test_streaming_token_timing_is_normalized_and_validated(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = make_library(Path(temp_dir) / "storage.json")
+            library._chat_service.get_streaming_api_token.return_value = {
+                "streamingApiToken": "stream-token",
+                "expiredAt": 1_200_000,
+            }
+            library._chat_service.stream_events.return_value = []
+
+            with patch.object(linelib_module.time, "time", return_value=1_000):
+                library.get_streaming_api_token_and_listen_stream_events(
+                    "Ubot",
+                    max_stream_seconds="60",
+                )
+
+            self.assertEqual(
+                60.0,
+                library._chat_service.stream_events.call_args.kwargs[
+                    "max_stream_seconds"
+                ],
+            )
+
+            for expired_at in (10**400, float("inf"), "invalid", True):
+                with self.subTest(expired_at=expired_at):
+                    library._chat_service.get_streaming_api_token.return_value = {
+                        "streamingApiToken": "stream-token",
+                        "expiredAt": expired_at,
+                    }
+                    with self.assertRaisesRegex(
+                        linelib_module.LINEOAError,
+                        "expiredAt",
+                    ):
+                        library.get_streaming_api_token_and_listen_stream_events(
+                            "Ubot"
+                        )
+
     def test_empty_stream_event_id_resets_last_event_id(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             library = make_library(Path(temp_dir) / "storage.json")
@@ -340,6 +377,33 @@ class LINELibTests(unittest.TestCase):
         self.assertIsNone(library._provider)
         self.assertEqual({"providerId": "provider"}, library.provider)
         self.assertEqual(2, library._chat_service._request.call_count)
+
+    def test_cached_properties_preserve_structured_library_errors(self):
+        for property_name in ("chats", "provider"):
+            with self.subTest(property_name=property_name):
+                library = LINELib.__new__(LINELib)
+                library._session = Mock()
+                library._xsrf_token = "xsrf"
+                library._bots = Mock(ids={"@bot": "Ubot"})
+                library._chats = None
+                library._provider = None
+                library._chat_service = Mock(request_timeout=30)
+                original = linelib_module.LINEOAError(
+                    "authentication expired",
+                    code="auth_expired",
+                    details={"retry": False},
+                )
+                if property_name == "chats":
+                    library._chat_service.get_chats.side_effect = original
+                else:
+                    library._chat_service._request.side_effect = original
+
+                with self.assertRaises(linelib_module.LINEOAError) as raised:
+                    getattr(library, property_name)
+
+                self.assertIs(original, raised.exception)
+                self.assertEqual("auth_expired", raised.exception.code)
+                self.assertEqual({"retry": False}, raised.exception.details)
 
     def test_save_link_metadata_creates_parent_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -404,6 +468,7 @@ class AsyncLINELibTests(unittest.IsolatedAsyncioTestCase):
                 lambda: library.async_send_message("", "text", bot_id="Ubot"),
                 lambda: library.async_send_message("Uchat", "", bot_id="Ubot"),
                 lambda: library.async_send_file("", str(file_path), bot_id="Ubot"),
+                lambda: library.async_send_file("Uchat", None, bot_id="Ubot"),
                 lambda: library.async_send_mention("Ubot", "Uchat", ""),
             )
 

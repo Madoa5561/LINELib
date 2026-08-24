@@ -74,7 +74,7 @@ lib = LINELib(
 | `get_chat_messages(bot_id, chat_id, limit=50, before=None, after=None)` | 履歴取得 |
 | `listen_messages(bot_id, chat_id, on_message=None)` | チャット単位のSSEを継続受信 |
 
-送信先ID、Bot ID、メンション対象ID、テキスト本文などの必須文字列が空の場合は、通信やローカル送信枠の記録前に `LINEOAError` になります。
+送信先ID、Bot ID、メンション対象ID、テキスト本文、ファイルパスなどの必須値が `None` または空の場合は、通信やローカル送信枠の記録前に `LINEOAError` になります。
 
 互換alias:
 

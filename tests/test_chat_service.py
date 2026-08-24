@@ -152,6 +152,13 @@ class ChatServiceTests(unittest.TestCase):
             lambda: service.send_message("", "Uchat", {}, session=session),
             lambda: service.send_mention("Ubot", "Uchat", "", session=session),
             lambda: service.send_flex_message("Ubot", "", 1, session=session),
+            lambda: service.send_file("Ubot", "Uchat", None, session=session),
+            lambda: service.create_card_type_message(
+                "@",
+                "title",
+                "https://example.com/image.png",
+                session=session,
+            ),
         )
 
         for operation in operations:
@@ -160,6 +167,20 @@ class ChatServiceTests(unittest.TestCase):
                     operation()
 
         session.post.assert_not_called()
+
+    def test_create_card_type_message_wraps_invalid_response_id(self):
+        service = ChatService()
+        session = Mock()
+        for invalid_id in ("not-a-number", 1.5, True, -1):
+            with self.subTest(invalid_id=invalid_id):
+                session.post.return_value = SyncResponse({"id": invalid_id})
+                with self.assertRaisesRegex(LINEOAError, "response id is invalid"):
+                    service.create_card_type_message(
+                        "@bot",
+                        "title",
+                        "https://example.com/image.png",
+                        session=session,
+                    )
 
     def test_constructor_rejects_non_finite_timeouts(self):
         invalid_options = (
@@ -426,6 +447,8 @@ class AsyncChatServiceTests(unittest.IsolatedAsyncioTestCase):
             await service.async_send_message("Ubot", "", {}, session=session)
         with self.assertRaisesRegex(LINEOAError, "required"):
             await service.async_send_file("", "Uchat", "missing.bin", session=session)
+        with self.assertRaisesRegex(LINEOAError, "file_path"):
+            await service.async_send_file("Ubot", "Uchat", None, session=session)
 
         self.assertEqual([], session.calls)
 

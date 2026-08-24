@@ -56,6 +56,16 @@ class ChatService:
             verb = "is" if len(missing) == 1 else "are"
             raise LINEOAError(f"{', '.join(missing)} {verb} required")
 
+    @staticmethod
+    def _require_file_path(file_path: Any) -> Any:
+        try:
+            normalized_path = os.fspath(file_path)
+        except TypeError as error:
+            raise LINEOAError("file_path is required") from error
+        if not normalized_path:
+            raise LINEOAError("file_path is required")
+        return normalized_path
+
     def _base_headers(self) -> Dict[str, str]:
         return {
             **self.browser_headers,
@@ -215,6 +225,7 @@ class ChatService:
             dict: API response
         """
         self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
+        file_path = self._require_file_path(file_path)
         if not os.path.isfile(file_path):
             raise LINEOAError(f"File not found: {file_path}")
         req = session if session else requests
@@ -260,6 +271,7 @@ class ChatService:
         Async version of send_file using aiohttp.
         """
         self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
+        file_path = self._require_file_path(file_path)
         url_upload = f"https://chat.line.biz/api/v1/bots/{bot_id}/messages/{chat_id}/uploadFile"
         if not os.path.isfile(file_path):
             raise LINEOAError(f"File not found: {file_path}")
@@ -1205,7 +1217,9 @@ class ChatService:
         Returns:
             int: 作成されたカードの cardTypeMessageId
         """
+        self._require_non_empty_strings(at_id=at_id)
         at_id = at_id.lstrip("@")
+        self._require_non_empty_strings(at_id=at_id)
         url = f"https://manager.line.biz/api/bots/@{at_id}/cardTypeMessages"
         payload = {
             "title": title,
@@ -1260,7 +1274,15 @@ class ChatService:
         card_id = response_payload.get("id")
         if not card_id:
             raise LINEOAError("create_card_type_message failed: response did not contain an id")
-        return int(card_id)
+        if isinstance(card_id, int) and not isinstance(card_id, bool):
+            parsed_card_id = card_id
+        elif isinstance(card_id, str) and card_id.isdigit():
+            parsed_card_id = int(card_id)
+        else:
+            raise LINEOAError("create_card_type_message failed: response id is invalid")
+        if parsed_card_id <= 0:
+            raise LINEOAError("create_card_type_message failed: response id is invalid")
+        return parsed_card_id
 
     def delete_card_type_message(
         self,

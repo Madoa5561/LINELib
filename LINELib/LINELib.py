@@ -69,6 +69,16 @@ class LINELib:
             verb = "is" if len(missing) == 1 else "are"
             raise LINEOAError(f"{', '.join(missing)} {verb} required")
 
+    @staticmethod
+    def _require_file_path(file_path: Any) -> Any:
+        try:
+            normalized_path = os.fspath(file_path)
+        except TypeError as error:
+            raise LINEOAError("file_path is required") from error
+        if not normalized_path:
+            raise LINEOAError("file_path is required")
+        return normalized_path
+
     def _load_storage(self):
         try:
             return read_json(self.storage, missing={})
@@ -204,6 +214,12 @@ class LINELib:
         :param stop_event: 停止判定コールバック。Trueを返すとループを抜ける
         :return: 最後に受信したevent id（再接続時に使用）
         """
+        try:
+            max_stream_seconds = float(max_stream_seconds)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise LINEOAError("Invalid LINE streaming timing configuration") from error
+        if not math.isfinite(max_stream_seconds) or max_stream_seconds <= 0:
+            raise LINEOAError("Invalid LINE streaming timing configuration")
         token_info = self._chat_service.get_streaming_api_token(bot_id, session=self._session, xsrf_token=self._xsrf_token)
         streaming_api_token = token_info.get("streamingApiToken")
         if not isinstance(streaming_api_token, str) or not streaming_api_token:
@@ -211,8 +227,14 @@ class LINELib:
         streaming_api_base_url = token_info.get("streamingApiBaseUrl", "https://chat-streaming-api.line.biz")
         streaming_api_version = token_info.get("streamingApiVersion", "v2")
         token_expired_at = token_info.get("expiredAt")
-        if isinstance(token_expired_at, (int, float)):
-            seconds_until_expiry = max(0.0, (float(token_expired_at) - time.time() * 1000.0) / 1000.0)
+        if token_expired_at is not None:
+            try:
+                parsed_expired_at = float(token_expired_at)
+            except (TypeError, ValueError, OverflowError) as error:
+                raise LINEOAError("streaming token expiredAt is invalid") from error
+            if isinstance(token_expired_at, bool) or not math.isfinite(parsed_expired_at):
+                raise LINEOAError("streaming token expiredAt is invalid")
+            seconds_until_expiry = max(0.0, (parsed_expired_at - time.time() * 1000.0) / 1000.0)
             if seconds_until_expiry > 0:
                 max_stream_seconds = min(max_stream_seconds, max(1.0, seconds_until_expiry - 60.0))
         connection_id = token_info.get("connectionId")
@@ -438,6 +460,7 @@ class LINELib:
         if not bot_id:
             raise LINEOAError("No bot found")
         self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
+        file_path = self._require_file_path(file_path)
         if not os.path.isfile(file_path):
             raise LINEOAError(f"File not found: {file_path}")
         rate_limit_result = self._reserve_send_slot()
@@ -664,6 +687,7 @@ class LINELib:
         if not bot_id:
             raise LINEOAError("No bot found")
         self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
+        file_path = self._require_file_path(file_path)
         if not os.path.isfile(file_path):
             raise LINEOAError(f"File not found: {file_path}")
         rate_limit_result = self._reserve_send_slot()
@@ -712,8 +736,10 @@ class LINELib:
             try:
                 chats = self._chat_service.get_chats(bot_id, session=self._session, xsrf_token=self._xsrf_token)
                 self._chats = ChatsInfo(chats.get("list", []))
+            except LINEOAError:
+                raise
             except Exception as e:
-                raise LINEOAError(f"チャット一覧取得失敗: {e}")
+                raise LINEOAError(f"チャット一覧取得失敗: {e}") from e
         return self._chats
 
     @property
@@ -736,6 +762,8 @@ class LINELib:
                 if not isinstance(provider, (dict, list)):
                     raise LINEOAError("プロバイダー取得失敗: JSON response is invalid")
                 self._provider = provider
+            except LINEOAError:
+                raise
             except Exception as e:
                 raise LINEOAError(f"プロバイダー取得例外: {e}") from e
         return self._provider
