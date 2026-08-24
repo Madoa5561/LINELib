@@ -180,10 +180,11 @@ finally:
 | property | 内容 |
 |---|---|
 | `bots` | 遅延取得した `BotsInfo`。結果をinstance内でcache |
-| `chats` | 先頭Botのチャットを遅延取得した `ChatsInfo`。結果をcache |
+| `chats` | 最初のチャット対応Botのチャットを遅延取得した `ChatsInfo`。結果をcache |
 | `provider` | provider endpointの生JSON。結果をcache |
 
 `BotsInfo.ids` は `{basicSearchIdまたはBot名: botId}` です。
+省略時の送信先や `chats` propertyには、Bot一覧から `responseMode=BOT` を除いた最初のチャット対応Botを使用します。`BotsInfo.ids` 自体は確認用途のためBotモードを含む全一覧を保持します。
 
 ```python
 lib = LINELib(storage="lineoa-storage.json")

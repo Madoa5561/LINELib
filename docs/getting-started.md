@@ -47,7 +47,7 @@ print(accounts)
 print(accounts.ids)
 ```
 
-`accounts.ids` は `{basicSearchIdまたは名前: bot_id}` の辞書です。`bot_id` を省略できる一部メソッドでは、この一覧の先頭が選ばれます。複数アカウントを管理している場合は、意図しないアカウントを避けるため明示してください。
+`accounts.ids` は `{basicSearchIdまたは名前: bot_id}` の辞書で、Botモードを含む取得済みアカウントを確認できます。`bot_id` を省略できる一部メソッドでは、`responseMode=BOT` を除いた最初のチャット対応Botが選ばれます。複数のチャット対応アカウントを管理している場合は、意図しないアカウントを避けるため明示してください。
 
 チャット一覧から送信先IDを確認できます。
 

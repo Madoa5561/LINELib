@@ -298,7 +298,12 @@ class AuthService:
 		bot_ids = [
 			bot["botId"]
 			for bot in bots_payload.get("list", [])
-			if isinstance(bot, dict) and isinstance(bot.get("botId"), str) and bot["botId"].startswith("U")
+			if (
+				isinstance(bot, dict)
+				and isinstance(bot.get("botId"), str)
+				and bot["botId"].startswith("U")
+				and bot.get("responseMode") != "BOT"
+			)
 		]
 		user_name = bots_payload.get("userName")
 		return user_name if isinstance(user_name, str) else None, bot_ids

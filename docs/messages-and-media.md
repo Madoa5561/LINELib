@@ -17,7 +17,7 @@ bot = LineBot(cookie_path="lineoa-storage.json")
 | `mentionee_id` | メンション対象ユーザーのID |
 | `at_id` | Official Accountの `basicSearchId`。カード型Flexの作成で使用 |
 
-`bot_id` を省略できるメソッドは、取得できたBot一覧の先頭を使用します。複数アカウント環境では明示を推奨します。
+`bot_id` を省略できるメソッドは、取得できたBot一覧から `responseMode=BOT` を除いた最初のチャット対応Botを使用します。Botモードのアカウントは手動チャットAPIが403になるため、既定候補にはなりません。複数のチャット対応アカウントを管理している場合は、意図しないアカウントを避けるため明示してください。
 
 ## テキスト送信
 

@@ -24,12 +24,28 @@ def make_library(storage_path):
     library._rate_limit_enabled = True
     library._session = object()
     library._xsrf_token = "xsrf"
+    library._bot_ids = ["Uchat-enabled"]
     library._chat_service = Mock()
     library._bots = None
     return library
 
 
 class LINELibTests(unittest.TestCase):
+    def test_default_bot_uses_validated_chat_enabled_ids(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = make_library(Path(temp_dir) / "storage.json")
+            library._bots = Mock(
+                ids={"@bot-mode": "Ubot-mode", "@chat": "Uchat-enabled"}
+            )
+            library._reserve_send_slot = Mock(return_value=None)
+            library._chat_service.send_message.return_value = {}
+
+            library.send_message("Uchat", "hello")
+
+        call = library._chat_service.send_message.call_args
+        self.assertEqual("Uchat-enabled", call.args[0])
+        self.assertEqual("Uchat", call.args[1])
+
     def test_info_objects_reject_invalid_api_lists_as_library_errors(self):
         invalid_cases = (
             (linelib_module.BotsInfo, None, "Bot account list"),

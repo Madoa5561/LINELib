@@ -84,7 +84,7 @@ LINE側の制限とは別の、ライブラリ内の安全弁です。詳しく�
 | メソッド | 戻り値 | 内容 |
 |---|---|---|
 | `getBots()` | `BotsInfo` | 利用可能なOfficial Account一覧。`.ids` でID辞書 |
-| `getChats(bot_id=None, limit=100)` | `dict` | チャット一覧。`bot_id` 省略時は先頭Bot |
+| `getChats(bot_id=None, limit=100)` | `dict` | チャット一覧。`bot_id` 省略時は最初のチャット対応Bot |
 | `getChatMessages(bot_id=None, chat_id=None, limit=50, before=None, after=None)` | `dict` | 履歴取得。`chat_id` 必須 |
 | `getMembers(bot_id=None, chat_id=None, limit=100)` | `dict` | チャットメンバー取得。`chat_id` 必須 |
 
@@ -143,7 +143,7 @@ LINE側の制限とは別の、ライブラリ内の安全弁です。詳しく�
 |---|---|---|
 | `event(func)` | 登録した関数 | 関数名をキーにハンドラ登録。decoratorとして使用 |
 | `dispatch(event_type, event)` | `None` | 1イベントを正規化し、優先順位に従ってハンドラへ配送 |
-| `listen(botid=None, block=True)` | `Thread` または `None` | SSE Polling開始。`botid` 省略時は先頭Bot |
+| `listen(botid=None, block=True)` | `Thread` または `None` | SSE Polling開始。`botid` 省略時は最初のチャット対応Bot |
 | `stop()` | `None` | Polling停止フラグを設定し、必要ならlistenerをjoin |
 | `close()` | `None` | Pollingを停止し、保持している認証済みHTTP Sessionも閉じる |
 

@@ -76,6 +76,15 @@ class LINELib:
             raise LINEOAError("file_path is required")
         return normalized_path
 
+    def _default_bot_id(self) -> Optional[str]:
+        bot_ids = getattr(self, "_bot_ids", None)
+        if bot_ids is None:
+            bot_ids = self.bots.ids.values()
+        for bot_id in bot_ids:
+            if isinstance(bot_id, str) and bot_id:
+                return bot_id
+        return None
+
     def _load_storage(self):
         try:
             return read_json(self.storage, missing={})
@@ -465,10 +474,10 @@ class LINELib:
         指定チャットにファイルを送信
         :param chat_id: チャットID
         :param file_path: ファイルパス
-        :param bot_id: 利用するbotId（省略時は先頭bot）
+        :param bot_id: 利用するbotId（省略時は最初のチャット対応Bot）
         """
         if bot_id is None:
-            bot_id = next(iter(self.bots.ids.values()), None)
+            bot_id = self._default_bot_id()
         if not bot_id:
             raise LINEOAError("No bot found")
         self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
@@ -555,11 +564,11 @@ class LINELib:
         指定ユーザーにテキストメッセージを送信
         :param user_id: チャットID（ユーザーID）
         :param context: 送信するテキスト
-        :param bot_id: 利用するbotId（省略時は先頭bot）
+        :param bot_id: 利用するbotId（省略時は最初のチャット対応Bot）
         :param quoteToken: リプライ用(省略時は普通のメッセージ)
         """
         if bot_id is None:
-            bot_id = next(iter(self.bots.ids.values()), None)
+            bot_id = self._default_bot_id()
         if not bot_id:
             raise LINEOAError("No bot found")
         self._require_non_empty_strings(
@@ -586,7 +595,7 @@ class LINELib:
     async def async_send_message(self, user_id: str, context: str, bot_id: Optional[str] = None, quoteToken: Optional[str] = None) -> Dict[str, Any]:
         """Async wrapper for sending a text message."""
         if bot_id is None:
-            bot_id = next(iter(self.bots.ids.values()), None)
+            bot_id = self._default_bot_id()
         if not bot_id:
             raise LINEOAError("No bot found")
         self._require_non_empty_strings(
@@ -695,7 +704,7 @@ class LINELib:
     async def async_send_file(self, chat_id: str, file_path: str, bot_id: Optional[str] = None) -> Dict[str, Any]:
         """Async wrapper for sending a file."""
         if bot_id is None:
-            bot_id = next(iter(self.bots.ids.values()), None)
+            bot_id = self._default_bot_id()
         if not bot_id:
             raise LINEOAError("No bot found")
         self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
@@ -742,7 +751,7 @@ class LINELib:
     @property
     def chats(self):
         if self._chats is None:
-            bot_id = next(iter(self.bots.ids.values()), None)
+            bot_id = self._default_bot_id()
             if not bot_id:
                 raise LINEOAError("No bot found")
             try:

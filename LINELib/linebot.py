@@ -258,11 +258,9 @@ class LineBot:
             return botid
         if self._bot_ids:
             return self._bot_ids[0]
-        bots = self._lib.get_bots()
-        self._bot_ids = list(bots.ids.values())
-        if self._bot_ids:
-            return self._bot_ids[0]
-        raise RuntimeError("No bot_id found. Please check your cookie file.")
+        raise RuntimeError(
+            "No chat-enabled bot_id found. Please check the account response mode."
+        )
 
     def _polling_loop(self, bot_id):
         lineoa_logger.info(f"Polling start (botid={bot_id})")

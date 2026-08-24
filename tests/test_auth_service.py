@@ -52,6 +52,30 @@ def mock_session():
 
 
 class AuthServiceTests(unittest.TestCase):
+    def test_chat_session_excludes_bot_response_mode_from_default_ids(self):
+        service = AuthService()
+        session = mock_session()
+        session.get.side_effect = [
+            StubResponse(url=service.CHAT_URL),
+            StubResponse(url=service.CHAT_CSRF_URL, payload={"token": "xsrf"}),
+            StubResponse(
+                url=service.CHAT_BOTS_URL,
+                payload={
+                    "userName": "owner",
+                    "list": [
+                        {"botId": "Ubot-mode", "responseMode": "BOT"},
+                        {"botId": "Uchat-mode", "responseMode": "CHAT"},
+                        {"botId": "Ulegacy"},
+                    ],
+                }
+            ),
+        ]
+
+        user_name, bot_ids = service._initialize_chat_session(session)
+
+        self.assertEqual("owner", user_name)
+        self.assertEqual(["Uchat-mode", "Ulegacy"], bot_ids)
+
     def test_uid_mapping_validates_bot_account_list_shape(self):
         service = AuthService()
         chat_service = Mock()
