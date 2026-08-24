@@ -3,6 +3,7 @@ import math
 import re
 import time
 import urllib.parse
+from contextlib import contextmanager
 from html.parser import HTMLParser
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -80,6 +81,18 @@ class AuthService:
 			return False
 		normalized_domain = domain.lstrip(".").lower()
 		return normalized_domain == "line.biz" or normalized_domain.endswith(".line.biz")
+
+	@staticmethod
+	@contextmanager
+	def _wrap_interactive_login_errors(playwright_error: type[Exception]):
+		try:
+			yield
+		except LINEOAError:
+			raise
+		except playwright_error as error:
+			raise LINEOAError(
+				f"Interactive browser login failed: {type(error).__name__}"
+			) from error
 
 	def get_uid_map_from_at_ids(self, at_id_list: List[str], chat_service: Any, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, str]:
 		"""
@@ -332,6 +345,7 @@ class AuthService:
 			"interactive_timeout",
 		)
 		try:
+			from playwright.sync_api import Error as PlaywrightError
 			from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 			from playwright.sync_api import sync_playwright
 		except ImportError as error:
@@ -344,7 +358,7 @@ class AuthService:
 		browser_cookies: List[Dict[str, Any]] = []
 		account_xsrf_token: Optional[str] = None
 		final_url = ""
-		with sync_playwright() as playwright:
+		with self._wrap_interactive_login_errors(PlaywrightError), sync_playwright() as playwright:
 			try:
 				browser = playwright.chromium.launch(channel=browser_channel, headless=False)
 			except Exception as error:
@@ -469,7 +483,13 @@ class AuthService:
 					self.CHAT_URL,
 				])
 			finally:
-				browser.close()
+				try:
+					browser.close()
+				except Exception as error:
+					lineoa_logger.error(
+						"Failed to close the interactive browser: "
+						f"{type(error).__name__}"
+					)
 
 		session = requests.Session()
 		session.headers.update(browser_headers)

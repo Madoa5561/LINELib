@@ -1,6 +1,8 @@
 import html
 import json
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -70,6 +72,68 @@ class AuthServiceTests(unittest.TestCase):
                         "chrome",
                         value,
                     )
+
+    def test_interactive_browser_errors_are_wrapped(self):
+        class BrowserTransportError(Exception):
+            pass
+
+        class FakePage:
+            def on(self, *args):
+                return None
+
+            def goto(self, *args, **kwargs):
+                raise BrowserTransportError("browser disconnected")
+
+        class FakeContext:
+            def new_page(self):
+                return FakePage()
+
+        class FakeBrowser:
+            def new_context(self, **kwargs):
+                return FakeContext()
+
+            def close(self):
+                return None
+
+        class FakeChromium:
+            def launch(self, **kwargs):
+                return FakeBrowser()
+
+        class FakePlaywright:
+            chromium = FakeChromium()
+
+        class FakeManager:
+            def __enter__(self):
+                return FakePlaywright()
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+        fake_sync_api = types.ModuleType("playwright.sync_api")
+        fake_sync_api.Error = BrowserTransportError
+        fake_sync_api.TimeoutError = type("PlaywrightTimeoutError", (Exception,), {})
+        fake_sync_api.sync_playwright = lambda: FakeManager()
+        fake_package = types.ModuleType("playwright")
+        fake_package.sync_api = fake_sync_api
+
+        with patch.dict(
+            sys.modules,
+            {
+                "playwright": fake_package,
+                "playwright.sync_api": fake_sync_api,
+            },
+        ):
+            with self.assertRaises(LINEOAError) as raised:
+                AuthService()._login_with_interactive_browser(
+                    "owner@example.com",
+                    "test-password",
+                    None,
+                    True,
+                    "chrome",
+                    1,
+                )
+
+        self.assertIsInstance(raised.exception.__cause__, BrowserTransportError)
 
     def test_email_login_uses_official_http_flow_and_saves_cookies(self):
         with tempfile.TemporaryDirectory() as temp_dir:

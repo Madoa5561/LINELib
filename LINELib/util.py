@@ -1,30 +1,44 @@
 from typing import Dict, Any, Optional
-import json
 import os
 import time
+
+from .storage import read_json, update_json, write_json
 
 def merge_dicts(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
     c = a.copy()
     c.update(b)
     return c
 
-_IDMAP_PATH = os.path.join(os.path.dirname(__file__), '../id_map.json')
+_IDMAP_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../id_map.json"))
 
-def _load_idmap() -> Dict[str, Dict[str, str]]:
-    if os.path.exists(_IDMAP_PATH):
-        with open(_IDMAP_PATH, 'r', encoding='utf-8') as f:
-            return json.load(f)
+
+def _empty_idmap() -> Dict[str, Dict[str, str]]:
     return {"group_to_chat": {}, "chat_to_group": {}}
 
+
+def _validate_idmap(data: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+    group_to_chat = data.get("group_to_chat")
+    chat_to_group = data.get("chat_to_group")
+    if not isinstance(group_to_chat, dict) or not isinstance(chat_to_group, dict):
+        raise ValueError("ID map must contain group_to_chat and chat_to_group objects")
+    return data
+
+def _load_idmap() -> Dict[str, Dict[str, str]]:
+    return _validate_idmap(read_json(_IDMAP_PATH, missing=_empty_idmap()))
+
 def _save_idmap(data: Dict[str, Dict[str, str]]):
-    with open(_IDMAP_PATH, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    write_json(_IDMAP_PATH, _validate_idmap(data))
 
 def link_group_and_chat(group_id: str, chat_id: str):
-    data = _load_idmap()
-    data["group_to_chat"][group_id] = chat_id
-    data["chat_to_group"][chat_id] = group_id
-    _save_idmap(data)
+    def update_idmap(data: Dict[str, Any]) -> None:
+        group_to_chat = data.setdefault("group_to_chat", {})
+        chat_to_group = data.setdefault("chat_to_group", {})
+        if not isinstance(group_to_chat, dict) or not isinstance(chat_to_group, dict):
+            raise ValueError("ID map must contain group_to_chat and chat_to_group objects")
+        group_to_chat[group_id] = chat_id
+        chat_to_group[chat_id] = group_id
+
+    update_json(_IDMAP_PATH, update_idmap, missing=_empty_idmap())
 
 def get_chatid_from_groupid(group_id: str) -> Optional[str]:
     data = _load_idmap()

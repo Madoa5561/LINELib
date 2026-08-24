@@ -85,6 +85,18 @@ class FailingStreamResponse(StreamResponse):
         raise requests.ConnectionError("stream lost")
 
 
+class LegacyAsyncioTimeoutError(Exception):
+    pass
+
+
+class RaisingAsyncContext:
+    async def __aenter__(self):
+        raise LegacyAsyncioTimeoutError("request timed out")
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+
 class FakeAioSession:
     def __init__(self):
         self.calls = []
@@ -198,6 +210,15 @@ class ChatServiceTests(unittest.TestCase):
 
         self.assertIsInstance(raised.exception.__cause__, requests.ConnectionError)
 
+    def test_listen_messages_disconnect_is_wrapped_as_library_error(self):
+        session = requests.Session()
+        session.get = Mock(return_value=FailingStreamResponse())
+
+        with self.assertRaises(LINEOAError) as raised:
+            ChatService().listen_messages("Ubot", "Uchat", session=session)
+
+        self.assertIsInstance(raised.exception.__cause__, requests.ConnectionError)
+
     def test_get_chat_members_rejects_missing_ids_before_request(self):
         service = ChatService()
         session = requests.Session()
@@ -308,8 +329,62 @@ class ChatServiceTests(unittest.TestCase):
         self.assertEqual("fresh-xsrf", second_kwargs["headers"]["x-xsrf-token"])
         self.assertEqual(12, second_kwargs["timeout"])
 
+    def test_get_chat_messages_stops_when_csrf_request_fails(self):
+        service = ChatService()
+        csrf_failure = SyncResponse()
+        csrf_failure.ok = False
+        csrf_failure.status_code = 503
+        session = requests.Session()
+        session.get = Mock(
+            side_effect=[csrf_failure, SyncResponse({"list": []})]
+        )
+
+        with self.assertRaisesRegex(LINEOAError, "HTTP 503"):
+            service.get_chat_messages("Ubot", "Uchat", session=session)
+
+        self.assertEqual(1, session.get.call_count)
+
 
 class AsyncChatServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_python_310_async_timeouts_are_wrapped(self):
+        service = ChatService()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "upload.bin"
+            file_path.write_bytes(b"payload")
+            operations = (
+                lambda session: service.async_send_file(
+                    "Ubot", "Uchat", str(file_path), session=session
+                ),
+                lambda session: service.async_send_message(
+                    "Ubot", "Uchat", {"type": "text"}, session=session
+                ),
+                lambda session: service.async_get_chat_members(
+                    "Ubot", "Uchat", session=session
+                ),
+                lambda session: service.async_get_chat_messages(
+                    "Ubot", "Uchat", session=session
+                ),
+            )
+
+            for operation in operations:
+                with self.subTest(operation=operation):
+                    session = Mock()
+                    session.get.return_value = RaisingAsyncContext()
+                    session.post.return_value = RaisingAsyncContext()
+                    with patch.object(
+                        chat_service_module.asyncio,
+                        "TimeoutError",
+                        LegacyAsyncioTimeoutError,
+                    ):
+                        with self.assertRaises(LINEOAError) as raised:
+                            await operation(session)
+
+                    self.assertIsInstance(
+                        raised.exception.__cause__,
+                        LegacyAsyncioTimeoutError,
+                    )
+
     async def test_async_get_chat_members_rejects_missing_ids(self):
         service = ChatService()
         session = FakeAioSession()

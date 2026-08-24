@@ -1,3 +1,4 @@
+import asyncio
 import requests
 import aiohttp
 import math
@@ -280,7 +281,7 @@ class ChatService:
                 timeout=aiohttp.ClientTimeout(total=self.request_timeout),
             ) as resp_bulk:
                 return await self._async_json_response(resp_bulk, "bulkSendFiles")
-        except (aiohttp.ClientError, TimeoutError) as error:
+        except (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError) as error:
             raise LINEOAError(f"async_send_file failed: {type(error).__name__}") from error
         finally:
             if own_session:
@@ -336,7 +337,7 @@ class ChatService:
                 timeout=aiohttp.ClientTimeout(total=self.request_timeout),
             ) as resp:
                 return await self._async_json_response(resp, "get_chat_members")
-        except (aiohttp.ClientError, TimeoutError) as error:
+        except (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError) as error:
             raise LINEOAError(f"async_get_chat_members failed: {type(error).__name__}") from error
         finally:
             if own_session:
@@ -370,7 +371,22 @@ class ChatService:
             try:
                 if resp.status_code != 200:
                     raise LINEOAError(f"listen_messages failed: HTTP {resp.status_code}")
-                for event in SSEParser.iter_events(resp.iter_lines(decode_unicode=True)):
+                try:
+                    lines = resp.iter_lines(decode_unicode=True)
+                except requests.RequestException as error:
+                    raise LINEOAError(
+                        f"listen_messages failed: {type(error).__name__}"
+                    ) from error
+                events = SSEParser.iter_events(lines)
+                while True:
+                    try:
+                        event = next(events)
+                    except StopIteration:
+                        break
+                    except requests.RequestException as error:
+                        raise LINEOAError(
+                            f"listen_messages failed: {type(error).__name__}"
+                        ) from error
                     if event.event not in (None, "chat"):
                         continue
                     data = event.payload
@@ -418,11 +434,11 @@ class ChatService:
             headers["X-XSRF-TOKEN"] = xsrf_cookie
         else:
             csrf_resp = self._request("get_csrf_token", req.get, "https://chat.line.biz/api/v1/csrfToken", headers=headers, timeout=self.request_timeout)
-            if csrf_resp.ok:
-                csrf_json = self._json_response(csrf_resp, "get_csrf_token")
-                token = csrf_json.get("token")
-                if token:
-                    headers["X-XSRF-TOKEN"] = token
+            csrf_json = self._json_response(csrf_resp, "get_csrf_token")
+            token = csrf_json.get("token")
+            if not isinstance(token, str) or not token:
+                raise LINEOAError("get_csrf_token failed: response did not contain a token")
+            headers["X-XSRF-TOKEN"] = token
         resp = self._request("get_chat_messages", req.get, url, headers=headers, params=params, timeout=self.request_timeout)
         return self._json_response(resp, "get_chat_messages")
 
@@ -451,7 +467,7 @@ class ChatService:
                 timeout=aiohttp.ClientTimeout(total=self.request_timeout),
             ) as resp:
                 return await self._async_json_response(resp, "get_chat_messages")
-        except (aiohttp.ClientError, TimeoutError) as error:
+        except (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError) as error:
             raise LINEOAError(f"async_get_chat_messages failed: {type(error).__name__}") from error
         finally:
             if own_session:
@@ -995,7 +1011,7 @@ class ChatService:
             ) as resp:
                 if resp.status >= 400:
                     raise LINEOAError(f"async_send_message failed: HTTP {resp.status}")
-        except (aiohttp.ClientError, TimeoutError) as error:
+        except (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError) as error:
             raise LINEOAError(f"async_send_message failed: {type(error).__name__}") from error
         finally:
             if own_session:

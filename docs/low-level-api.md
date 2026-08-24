@@ -213,6 +213,7 @@ asyncメソッドは `cookies`, `xsrf_token`, `aiohttp.ClientSession` を受け�
 | `mark_as_read(bot_id, chat_id, message_id, timestamp=None, ...)` | 指定メッセージまで既読 |
 
 `listen_messages()` には停止callbackがないため、通常の受信には停止・再接続を管理できる `LineBot.listen()` を使用してください。
+SSE読取中の通信切断は `LINEOAError` として通知されます。
 
 ### Bot・チャット
 
@@ -304,6 +305,8 @@ auth = AuthService(
 | `get_uid_map_from_at_ids(at_id_list, chat_service, session=None, xsrf_token=None)` | 認証済みBot一覧から `{at_id: bot_id}` を組み立てる |
 
 `login_and_get_token()` は名前に `token` を含みますが、実際の戻り値はaccess tokenではなくOAuth authorization codeです。また、reCAPTCHAや追加認証があるflowを回避しません。
+
+対話ブラウザの起動後にPlaywrightの通信・操作エラーが発生した場合も `LINEOAError` として通知されます。
 
 認証全体の説明は[認証](authentication.md)を参照してください。
 
