@@ -83,12 +83,12 @@ class AuthService:
 		return normalized_domain == "line.biz" or normalized_domain.endswith(".line.biz")
 
 	@staticmethod
-	def _close_failed_session(session: requests.Session) -> None:
+	def _close_owned_session(session: requests.Session) -> None:
 		try:
 			session.close()
 		except Exception as error:
 			lineoa_logger.error(
-				"Failed to close an unsuccessful authentication session: "
+				"Failed to close an internally owned authentication session: "
 				f"{type(error).__name__}"
 			)
 
@@ -147,6 +147,22 @@ class AuthService:
 
 	def _session_from_storage(self, data: Dict[str, Any], browser_channel: str = "chrome") -> requests.Session:
 		session = requests.Session()
+		try:
+			return self._populate_session_from_storage(
+				session,
+				data,
+				browser_channel,
+			)
+		except BaseException:
+			self._close_owned_session(session)
+			raise
+
+	def _populate_session_from_storage(
+		self,
+		session: requests.Session,
+		data: Dict[str, Any],
+		browser_channel: str,
+	) -> requests.Session:
 		session.headers.update(self._browser_headers_for_channel(browser_channel))
 		restored_cookie_count = 0
 		for cookie in data["cookies"]:
@@ -239,7 +255,17 @@ class AuthService:
 			raise LINEOAError("The login response did not provide a redirect URI.")
 		redirect_uri = urllib.parse.urljoin("https://account.line.biz/", redirect_uri)
 		parsed = urllib.parse.urlparse(redirect_uri)
-		if parsed.scheme != "https" or parsed.hostname not in self.ALLOWED_LOGIN_HOSTS:
+		try:
+			port = parsed.port
+		except ValueError as error:
+			raise LINEOAError("The login response contained an unsafe redirect URI.") from error
+		if (
+			parsed.scheme != "https"
+			or parsed.hostname not in self.ALLOWED_LOGIN_HOSTS
+			or parsed.username is not None
+			or parsed.password is not None
+			or port not in {None, 443}
+		):
 			raise LINEOAError("The login response contained an unsafe redirect URI.")
 		return redirect_uri
 
@@ -292,12 +318,12 @@ class AuthService:
 				}
 			except (LINEOAError, InteractiveLoginRequired):
 				if stored_session is not None:
-					self._close_failed_session(stored_session)
+					self._close_owned_session(stored_session)
 				if not email or not password:
 					raise
 			except Exception:
 				if stored_session is not None:
-					self._close_failed_session(stored_session)
+					self._close_owned_session(stored_session)
 				raise
 
 		if not email or not password:
@@ -313,6 +339,34 @@ class AuthService:
 			)
 
 		session = requests.Session()
+		try:
+			return self._login_with_direct_email_session(
+				session=session,
+				email=email,
+				password=password,
+				get_2fa_code_callback=get_2fa_code_callback,
+				recaptcha_response=recaptcha_response,
+				stay_logged_in=stay_logged_in,
+				xsrf_token=xsrf_token,
+				cookies=cookies,
+				browser_channel=browser_channel,
+			)
+		except BaseException:
+			self._close_owned_session(session)
+			raise
+
+	def _login_with_direct_email_session(
+		self,
+		session: requests.Session,
+		email: str,
+		password: str,
+		get_2fa_code_callback: Optional[Callable[[], str]],
+		recaptcha_response: str,
+		stay_logged_in: bool,
+		xsrf_token: Optional[str],
+		cookies: Optional[Dict[str, str]],
+		browser_channel: str,
+	) -> Dict[str, Any]:
 		session.headers.update(self._browser_headers_for_channel(browser_channel))
 		if cookies:
 			for name, value in cookies.items():
@@ -530,7 +584,45 @@ class AuthService:
 						f"{type(error).__name__}"
 					)
 
+		return self._finish_interactive_login(
+			browser_headers=browser_headers,
+			browser_cookies=browser_cookies,
+			account_xsrf_token=account_xsrf_token,
+			final_url=final_url,
+			get_2fa_code_callback=get_2fa_code_callback,
+		)
+
+	def _finish_interactive_login(
+		self,
+		browser_headers: Dict[str, str],
+		browser_cookies: List[Dict[str, Any]],
+		account_xsrf_token: Optional[str],
+		final_url: str,
+		get_2fa_code_callback: Optional[Callable[[], str]],
+	) -> Dict[str, Any]:
 		session = requests.Session()
+		try:
+			return self._complete_interactive_login_session(
+				session=session,
+				browser_headers=browser_headers,
+				browser_cookies=browser_cookies,
+				account_xsrf_token=account_xsrf_token,
+				final_url=final_url,
+				get_2fa_code_callback=get_2fa_code_callback,
+			)
+		except BaseException:
+			self._close_owned_session(session)
+			raise
+
+	def _complete_interactive_login_session(
+		self,
+		session: requests.Session,
+		browser_headers: Dict[str, str],
+		browser_cookies: List[Dict[str, Any]],
+		account_xsrf_token: Optional[str],
+		final_url: str,
+		get_2fa_code_callback: Optional[Callable[[], str]],
+	) -> Dict[str, Any]:
 		session.headers.update(browser_headers)
 		for cookie in browser_cookies:
 			if not self._is_line_business_cookie_domain(cookie.get("domain")):
@@ -594,7 +686,32 @@ class AuthService:
 		:param session: requests.Session (newly created if omitted)
 		:return: code (authorization code) or None
 		 """
-		session = session or requests.Session()
+		own_session = session is None
+		active_session = requests.Session() if session is None else session
+		try:
+			return self._login_and_get_token_with_session(
+				email=email,
+				password=password,
+				client_id=client_id,
+				code_challenge=code_challenge,
+				redirect_uri=redirect_uri,
+				state=state,
+				session=active_session,
+			)
+		finally:
+			if own_session:
+				self._close_owned_session(active_session)
+
+	def _login_and_get_token_with_session(
+		self,
+		email: str,
+		password: str,
+		client_id: str,
+		code_challenge: str,
+		redirect_uri: str,
+		state: str,
+		session: requests.Session,
+	) -> str:
 		params = {
 			"client_id": client_id,
 			"code_challenge": code_challenge,
@@ -712,7 +829,34 @@ class AuthService:
 		:param cookies: Session cookies (if needed)
 		:return: dict (API response)
 		 """
-		session = session or requests.Session()
+		own_session = session is None
+		active_session = requests.Session() if session is None else session
+		try:
+			return self._login_with_email_session(
+				email=email,
+				password=password,
+				recaptcha_response=recaptcha_response,
+				stay_logged_in=stay_logged_in,
+				xsrf_token=xsrf_token,
+				cookies=cookies,
+				session=active_session,
+				referer=referer,
+			)
+		finally:
+			if own_session:
+				self._close_owned_session(active_session)
+
+	def _login_with_email_session(
+		self,
+		email: str,
+		password: str,
+		recaptcha_response: str,
+		stay_logged_in: bool,
+		xsrf_token: Optional[str],
+		cookies: Optional[Dict[str, str]],
+		session: requests.Session,
+		referer: Optional[str],
+	) -> Dict[str, Any]:
 		if cookies:
 			for name, value in cookies.items():
 				session.cookies.set(name, value, domain="account.line.biz", path="/")

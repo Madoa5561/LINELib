@@ -308,6 +308,8 @@ auth = AuthService(
 
 `login_and_get_token()` は名前に `token` を含みますが、実際の戻り値はaccess tokenではなくOAuth authorization codeです。また、reCAPTCHAや追加認証があるflowを回避しません。
 
+`login_with_email()` と `login_and_get_token()` は `session=None` の場合に内部作成したSessionを処理後に自動で閉じます。明示的に渡したSessionは呼出側で管理してください。`login_with_email_and_2fa()` が成功時に返す `result["session"]` は後続の認証済み通信で使うSessionなので、`AuthService` を直接利用する場合は不要になった時点で `close()` してください。
+
 対話ブラウザの起動後にPlaywrightの通信・操作エラーが発生した場合も `LINEOAError` として通知されます。
 
 認証全体の説明は[認証](authentication.md)を参照してください。

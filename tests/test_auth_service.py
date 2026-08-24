@@ -192,6 +192,7 @@ class AuthServiceTests(unittest.TestCase):
             session.headers.update.assert_called_once_with(
                 service._browser_headers_for_channel("chrome")
             )
+            session.close.assert_not_called()
             saved = json.loads(storage_path.read_text(encoding="utf-8"))
             self.assertNotIn("email", saved)
             self.assertTrue(any(cookie["name"] == "XSRF-TOKEN" for cookie in saved["cookies"]))
@@ -219,6 +220,30 @@ class AuthServiceTests(unittest.TestCase):
 
         self.assertEqual("recaptcha", raised.exception.reason)
         self.assertEqual(1, session.get.call_count)
+        session.close.assert_called_once_with()
+
+    def test_stored_session_closes_when_cookie_restore_fails(self):
+        service = AuthService()
+        session = Mock()
+        session.cookies.set.side_effect = RuntimeError("cookie jar failed")
+
+        with (
+            patch("LINELib.AuthService.requests.Session", return_value=session),
+            self.assertRaisesRegex(RuntimeError, "cookie jar failed"),
+        ):
+            service._session_from_storage(
+                {
+                    "cookies": [
+                        {
+                            "name": "session",
+                            "value": "value",
+                            "domain": "chat.line.biz",
+                        }
+                    ]
+                }
+            )
+
+        session.close.assert_called_once_with()
 
     def test_interactive_login_starts_chrome_before_direct_http_login(self):
         service = AuthService()
@@ -277,25 +302,29 @@ class AuthServiceTests(unittest.TestCase):
 
     def test_stored_session_rejects_storage_without_usable_line_cookies(self):
         service = AuthService()
+        session = Mock()
 
-        with self.assertRaisesRegex(LINEOAError, "usable LINE Business cookies"):
-            service._session_from_storage(
-                {
-                    "cookies": [
-                        {
-                            "name": "third-party",
-                            "value": "blocked",
-                            "domain": ".example.com",
-                        },
-                        {
-                            "name": "expired",
-                            "value": "blocked",
-                            "domain": "chat.line.biz",
-                            "expiry": 10**1000,
-                        },
-                    ]
-                }
-            )
+        with patch("LINELib.AuthService.requests.Session", return_value=session):
+            with self.assertRaisesRegex(LINEOAError, "usable LINE Business cookies"):
+                service._session_from_storage(
+                    {
+                        "cookies": [
+                            {
+                                "name": "third-party",
+                                "value": "blocked",
+                                "domain": ".example.com",
+                            },
+                            {
+                                "name": "expired",
+                                "value": "blocked",
+                                "domain": "chat.line.biz",
+                                "expiry": 10**1000,
+                            },
+                        ]
+                    }
+                )
+
+        session.close.assert_called_once_with()
 
     def test_invalid_stored_session_falls_back_to_interactive_login(self):
         service = AuthService()
@@ -496,8 +525,128 @@ class AuthServiceTests(unittest.TestCase):
 
     def test_external_redirect_is_rejected(self):
         service = AuthService()
-        with self.assertRaisesRegex(Exception, "unsafe redirect"):
-            service._validate_redirect_uri("https://example.com/callback")
+        unsafe_redirects = (
+            "https://example.com/callback",
+            "https://user:password@account.line.biz/callback",
+            "https://account.line.biz:444/callback",
+            "https://account.line.biz:invalid/callback",
+        )
+        for redirect_uri in unsafe_redirects:
+            with self.subTest(redirect_uri=redirect_uri):
+                with self.assertRaisesRegex(LINEOAError, "unsafe redirect"):
+                    service._validate_redirect_uri(redirect_uri)
+
+        self.assertEqual(
+            "https://account.line.biz:443/callback",
+            service._validate_redirect_uri(
+                "https://account.line.biz:443/callback"
+            ),
+        )
+
+    def test_login_with_email_closes_only_an_internally_created_session(self):
+        service = AuthService()
+        internal_session = mock_session()
+        internal_session.post.return_value = StubResponse(
+            url=service.EMAIL_LOGIN_URL,
+            payload={"status": "success"},
+        )
+
+        with patch(
+            "LINELib.AuthService.requests.Session",
+            return_value=internal_session,
+        ):
+            result = service.login_with_email("owner@example.com", "password")
+
+        self.assertEqual("success", result["status"])
+        internal_session.close.assert_called_once_with()
+
+        caller_session = mock_session()
+        caller_session.post.return_value = StubResponse(
+            url=service.EMAIL_LOGIN_URL,
+            payload={"status": "success"},
+        )
+        service.login_with_email(
+            "owner@example.com",
+            "password",
+            session=caller_session,
+        )
+        caller_session.close.assert_not_called()
+
+    def test_login_and_get_token_closes_only_an_internally_created_session(self):
+        service = AuthService()
+        internal_session = mock_session()
+        internal_session.get.side_effect = requests.ConnectionError("offline")
+
+        with patch(
+            "LINELib.AuthService.requests.Session",
+            return_value=internal_session,
+        ):
+            with self.assertRaisesRegex(LINEOAError, "start OAuth"):
+                service.login_and_get_token(
+                    "owner@example.com",
+                    "password",
+                    "client",
+                    "challenge",
+                    "https://example.com/callback",
+                    "state",
+                )
+
+        internal_session.close.assert_called_once_with()
+
+        caller_session = mock_session()
+        caller_session.get.side_effect = requests.ConnectionError("offline")
+        with self.assertRaisesRegex(LINEOAError, "start OAuth"):
+            service.login_and_get_token(
+                "owner@example.com",
+                "password",
+                "client",
+                "challenge",
+                "https://example.com/callback",
+                "state",
+                session=caller_session,
+            )
+        caller_session.close.assert_not_called()
+
+    def test_interactive_completion_closes_session_only_on_failure(self):
+        service = AuthService()
+        failed_session = mock_session()
+        with (
+            patch(
+                "LINELib.AuthService.requests.Session",
+                return_value=failed_session,
+            ),
+            patch.object(
+                service,
+                "_complete_interactive_login_session",
+                side_effect=InteractiveLoginRequired("email_otp"),
+            ),
+            self.assertRaises(InteractiveLoginRequired),
+        ):
+            service._finish_interactive_login({}, [], None, "", None)
+
+        failed_session.close.assert_called_once_with()
+
+        successful_session = mock_session()
+        expected = {
+            "session": successful_session,
+            "user_info": {"user_name": "owner"},
+            "bot_ids": ["Ubot"],
+        }
+        with (
+            patch(
+                "LINELib.AuthService.requests.Session",
+                return_value=successful_session,
+            ),
+            patch.object(
+                service,
+                "_complete_interactive_login_session",
+                return_value=expected,
+            ),
+        ):
+            result = service._finish_interactive_login({}, [], None, "", None)
+
+        self.assertIs(expected, result)
+        successful_session.close.assert_not_called()
 
 
 if __name__ == "__main__":
