@@ -273,6 +273,34 @@ class ChatServiceTests(unittest.TestCase):
 
         session.post.assert_not_called()
 
+    def test_payload_operations_reject_invalid_objects_before_request(self):
+        service = ChatService()
+        session = Mock()
+        operations = (
+            lambda: service.send_message("Ubot", "Uchat", None, session=session),
+            lambda: service.send_message("Ubot", "Uchat", {}, session=session),
+            lambda: service.streaming_state("Ubot", True, session=session),
+            lambda: service.streaming_state("Ubot", {}, session=session),
+            lambda: service.streaming_state(
+                "Ubot",
+                {"connectionId": "", "idle": True},
+                session=session,
+            ),
+            lambda: service.streaming_state(
+                "Ubot",
+                {"connectionId": "connection", "idle": "true"},
+                session=session,
+            ),
+        )
+
+        for operation in operations:
+            with self.subTest(operation=operation):
+                with self.assertRaises(LINEOAError):
+                    operation()
+
+        session.post.assert_not_called()
+        session.put.assert_not_called()
+
     def test_create_card_type_message_wraps_invalid_response_id(self):
         service = ChatService()
         session = Mock()
@@ -727,7 +755,11 @@ class ChatServiceTests(unittest.TestCase):
             ]
         )
 
-        result = service.get_chats("Ubot", session=session)
+        result = service.get_chats(
+            "Ubot",
+            session=session,
+            prioritize_pinned_chat=False,
+        )
 
         self.assertEqual({"list": []}, result)
         first_url = session.get.call_args_list[0].args[0]
@@ -735,9 +767,10 @@ class ChatServiceTests(unittest.TestCase):
         self.assertEqual("https://chat.line.biz/api/v1/csrfToken", first_url)
         self.assertEqual("fresh-xsrf", second_kwargs["headers"]["x-xsrf-token"])
         self.assertEqual(25, second_kwargs["params"]["limit"])
+        self.assertEqual("false", second_kwargs["params"]["prioritizePinnedChat"])
         self.assertEqual(12, second_kwargs["timeout"])
 
-    def test_get_chats_rejects_limits_outside_api_range_before_request(self):
+    def test_get_chats_rejects_invalid_queries_before_request(self):
         service = ChatService()
         session = requests.Session()
         session.get = Mock(return_value=SyncResponse({"list": []}))
@@ -746,6 +779,13 @@ class ChatServiceTests(unittest.TestCase):
             with self.subTest(limit=limit):
                 with self.assertRaisesRegex(LINEOAError, "between 1 and 25"):
                     service.get_chats("Ubot", limit=limit, session=session)
+
+        with self.assertRaisesRegex(LINEOAError, "prioritize_pinned_chat"):
+            service.get_chats(
+                "Ubot",
+                prioritize_pinned_chat="false",
+                session=session,
+            )
 
         session.get.assert_not_called()
 
@@ -766,6 +806,32 @@ class ChatServiceTests(unittest.TestCase):
 
 
 class AsyncChatServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_async_operations_reject_invalid_cookies_before_request(self):
+        service = ChatService()
+        session = FakeAioSession()
+        operations = (
+            lambda: service.async_send_message(
+                "Ubot",
+                "Uchat",
+                {"type": "text"},
+                cookies=object(),
+                session=session,
+            ),
+            lambda: service.async_get_chat_messages(
+                "Ubot",
+                "Uchat",
+                cookies=object(),
+                session=session,
+            ),
+        )
+
+        for operation in operations:
+            with self.subTest(operation=operation):
+                with self.assertRaisesRegex(LINEOAError, "cookies"):
+                    await operation()
+
+        self.assertEqual([], session.calls)
+
     async def test_async_send_operations_reject_missing_ids_before_request(self):
         service = ChatService()
         session = FakeAioSession()
@@ -776,6 +842,10 @@ class AsyncChatServiceTests(unittest.IsolatedAsyncioTestCase):
             await service.async_send_file("", "Uchat", "missing.bin", session=session)
         with self.assertRaisesRegex(LINEOAError, "file_path"):
             await service.async_send_file("Ubot", "Uchat", None, session=session)
+        with self.assertRaisesRegex(LINEOAError, "non-empty object"):
+            await service.async_send_message("Ubot", "Uchat", None, session=session)
+        with self.assertRaisesRegex(LINEOAError, "non-empty object"):
+            await service.async_send_message("Ubot", "Uchat", {}, session=session)
 
         self.assertEqual([], session.calls)
 

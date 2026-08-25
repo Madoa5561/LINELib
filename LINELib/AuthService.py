@@ -73,6 +73,18 @@ class AuthService:
 			raise LINEOAError(f"{name} must be a positive finite number.")
 		return parsed_value
 
+	@staticmethod
+	def _require_boolean(value: Any, name: str) -> bool:
+		if not isinstance(value, bool):
+			raise LINEOAError(f"{name} must be a boolean.")
+		return value
+
+	@staticmethod
+	def _require_cookie_mapping(cookies: Any) -> Optional[Dict[str, str]]:
+		if cookies is not None and not isinstance(cookies, dict):
+			raise LINEOAError("cookies must be a dictionary or None.")
+		return cookies
+
 	@classmethod
 	def _browser_headers_for_channel(cls, browser_channel: str) -> Dict[str, str]:
 		return browser_headers_for_channel(browser_channel)
@@ -312,6 +324,11 @@ class AuthService:
 
 	def login_with_email_and_2fa(self, email: Optional[str], password: Optional[str], get_2fa_code_callback: Optional[Callable[[], str]], recaptcha_response: str = "", stay_logged_in: bool = True, xsrf_token: Optional[str] = None, cookies: Optional[Dict[str, str]] = None, interactive_login: bool = False, browser_channel: str = "chrome", interactive_timeout: float = 300) -> Dict[str, Any]:
 		"""Authenticate with saved cookies, direct HTTP, or an interactive browser."""
+		stay_logged_in = self._require_boolean(stay_logged_in, "stay_logged_in")
+		interactive_login = self._require_boolean(interactive_login, "interactive_login")
+		cookies = self._require_cookie_mapping(cookies)
+		if get_2fa_code_callback is not None and not callable(get_2fa_code_callback):
+			raise LINEOAError("get_2fa_code_callback must be callable.")
 		stored_data = self._load_cookie_storage()
 		if stored_data is not None:
 			stored_session = None
@@ -836,6 +853,8 @@ class AuthService:
 		:param cookies: Session cookies (if needed)
 		:return: dict (API response)
 		 """
+		stay_logged_in = self._require_boolean(stay_logged_in, "stay_logged_in")
+		cookies = self._require_cookie_mapping(cookies)
 		own_session = session is None
 		active_session = requests.Session() if session is None else session
 		try:

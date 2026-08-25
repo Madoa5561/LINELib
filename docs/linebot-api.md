@@ -41,8 +41,8 @@ bot = LineBot(
 | `reconnect_interval` | `5` | SSE再接続前の待機秒数 |
 | `max_reconnects` | `None` | 連続接続エラー上限。`None` は無制限 |
 | `max_stream_seconds` | `82800` | SSE 1接続の最大秒数 |
-| `get_2fa_code_callback` | `None` | 6桁メールOTPを返す引数なし関数 |
-| `interactive_login` | `False` | 可視ブラウザの公式ログイン画面を使うか |
+| `get_2fa_code_callback` | `None` | 6桁メールOTPを返す引数なし関数。`None` またはcallable |
+| `interactive_login` | `False` | 可視ブラウザの公式ログイン画面を使うか。boolのみ |
 | `browser_channel` | `"chrome"` | `chrome` または `msedge`。Cookie Sessionの認証用headerにも反映 |
 | `interactive_timeout` | `300` | 対話ログイン全体の待機秒数。bool以外の有限の正数 |
 

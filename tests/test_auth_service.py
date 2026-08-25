@@ -116,6 +116,80 @@ class AuthServiceTests(unittest.TestCase):
                         value,
                     )
 
+    def test_login_options_are_validated_before_session_work(self):
+        service = AuthService()
+
+        with (
+            patch.object(service, "_load_cookie_storage") as load_storage,
+            patch.object(service, "_login_with_interactive_browser") as browser_login,
+            patch("LINELib.AuthService.requests.Session") as session_class,
+        ):
+            operations = (
+                lambda: service.login_with_email_and_2fa(
+                    "owner@example.com",
+                    "test-password",
+                    None,
+                    interactive_login="false",
+                ),
+                lambda: service.login_with_email_and_2fa(
+                    "owner@example.com",
+                    "test-password",
+                    None,
+                    stay_logged_in="false",
+                ),
+                lambda: service.login_with_email_and_2fa(
+                    "owner@example.com",
+                    "test-password",
+                    1,
+                ),
+                lambda: service.login_with_email_and_2fa(
+                    "owner@example.com",
+                    "test-password",
+                    None,
+                    cookies=object(),
+                ),
+            )
+
+            for operation in operations:
+                with self.subTest(operation=operation):
+                    with self.assertRaises(LINEOAError):
+                        operation()
+
+        load_storage.assert_not_called()
+        browser_login.assert_not_called()
+        session_class.assert_not_called()
+
+        session = mock_session()
+        with self.assertRaisesRegex(LINEOAError, "stay_logged_in"):
+            service.login_with_email(
+                "owner@example.com",
+                "test-password",
+                stay_logged_in="false",
+                session=session,
+            )
+        session.post.assert_not_called()
+
+        with self.assertRaisesRegex(LINEOAError, "cookies"):
+            service.login_with_email(
+                "owner@example.com",
+                "test-password",
+                cookies=object(),
+                session=session,
+            )
+        session.post.assert_not_called()
+
+        session.post.return_value = StubResponse(
+            url=service.EMAIL_LOGIN_URL,
+            payload={"status": "success"},
+        )
+        service.login_with_email(
+            "owner@example.com",
+            "test-password",
+            stay_logged_in=False,
+            session=session,
+        )
+        self.assertIs(False, session.post.call_args.kwargs["json"]["stayLoggedIn"])
+
     def test_interactive_browser_errors_are_wrapped(self):
         class BrowserTransportError(Exception):
             pass

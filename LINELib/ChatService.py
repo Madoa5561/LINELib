@@ -163,11 +163,13 @@ class ChatService:
 
     @staticmethod
     def _cookie_value(cookies: Any) -> str:
+        if cookies is None:
+            return ""
         if isinstance(cookies, str):
             return cookies
         if isinstance(cookies, dict):
             return cookie_header(cookies)
-        return ""
+        raise LINEOAError("cookies must be a dictionary, string, or None")
 
     @staticmethod
     def _json_response(response: requests.Response, action: str, allow_empty: bool = False) -> Dict[str, Any]:
@@ -636,6 +638,10 @@ class ChatService:
         """
         self._require_non_empty_strings(bot_id=bot_id)
         limit = self._bounded_integer(limit, "limit", 1, 25)
+        prioritize_pinned_chat = self._require_boolean(
+            prioritize_pinned_chat,
+            "prioritize_pinned_chat",
+        )
         url = f"https://chat.line.biz/api/v2/bots/{bot_id}/chats"
         params = {
             "folderType": folder_type,
@@ -936,8 +942,12 @@ class ChatService:
             dict: Always empty
         """
         self._require_non_empty_strings(bot_id=bot_id)
-        if not state or "connectionId" not in state or "idle" not in state:
-            raise LINEOAError("require state 'connectionId' and 'idle' fields")
+        if not isinstance(state, dict):
+            raise LINEOAError("state must be an object")
+        connection_id = state.get("connectionId")
+        idle = state.get("idle")
+        self._require_non_empty_strings(connection_id=connection_id)
+        self._require_boolean(idle, "idle")
         payload = merge_dicts({}, state)
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/streaming/state"
         return self._put_json(
@@ -1107,6 +1117,8 @@ class ChatService:
             dict: Always empty
         """
         self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
+        if not isinstance(message, dict) or not message:
+            raise LINEOAError("message must be a non-empty object")
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/messages/send"
         browser_headers = self._browser_request_headers(
             Referer=f"https://chat.line.biz/{bot_id}/chat/{chat_id}",
@@ -1133,6 +1145,8 @@ class ChatService:
         cookies: dict of cookie name->value to send in Cookie header.
         """
         self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
+        if not isinstance(message, dict) or not message:
+            raise LINEOAError("message must be a non-empty object")
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/messages/send"
         headers = self._browser_request_headers(
             Referer=f"https://chat.line.biz/{bot_id}/chat/{chat_id}",

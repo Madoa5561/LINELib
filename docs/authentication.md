@@ -63,7 +63,7 @@ bot = LineBot(
 )
 ```
 
-`interactive_timeout` はbool以外の有限の正数を秒単位で指定します。不正値はブラウザ起動前に `LINEOAError` になります。
+`interactive_login` と `stay_logged_in` はbool、`interactive_timeout` はbool以外の有限の正数を秒単位で指定します。`get_2fa_code_callback` は `None` または呼び出し可能な関数です。不正値はCookie確認、HTTP通信、ブラウザ起動より前に `LINEOAError` になります。
 
 処理の流れ:
 

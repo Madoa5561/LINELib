@@ -122,7 +122,7 @@ finally:
 | `get_csrf_token()` | CSRF endpointのJSON |
 | `get_pinned_messages(bot_id, chat_id)` | ピン留めメッセージ |
 | `set_typing(bot_id, chat_id)` | 入力中状態 |
-| `streaming_state(bot_id, state)` | Streaming接続状態送信 |
+| `streaming_state(bot_id, state)` | Streaming接続状態送信。`connectionId` は空でない文字列、`idle` はbool |
 | `get_whitelist_domains()` | whitelist domain |
 | `get_me_settings_pc()` | PC設定 |
 | `get_chat_mode(bot_id)` | チャットモード |
@@ -211,14 +211,14 @@ chat = ChatService(request_timeout=30, upload_timeout=120, browser_headers=None)
 
 ほとんどの同期メソッドは末尾に `session=None, xsrf_token=None` を受け取ります。変更・認証が必要なendpointでは、ログイン済み `requests.Session` と `chat.line.biz` のXSRF tokenを同じSessionから渡してください。省略時は未認証のmodule-level `requests` が使われる場合があり、通常の管理API操作には向きません。
 
-asyncメソッドは `cookies`, `xsrf_token`, `aiohttp.ClientSession` を受け取ります。`cookies` は名前と値の辞書、またはdomain/pathを確認済みのCookie header文字列です。`session=None` なら内部で作成し、終了時に閉じます。外から渡したSessionは呼出側が閉じてください。
+asyncメソッドは `cookies`, `xsrf_token`, `aiohttp.ClientSession` を受け取ります。`cookies` は名前と値の辞書、domain/pathを確認済みのCookie header文字列、または `None` です。それ以外は接続前に `LINEOAError` になります。`session=None` なら内部で作成し、終了時に閉じます。外から渡したSessionは呼出側が閉じてください。
 
 ### 送信・メッセージ
 
 | メソッド | 内容 |
 |---|---|
-| `send_message(bot_id, chat_id, message, ...)` | 任意の内部message辞書を送信。成功時 `{}` |
-| `async_send_message(bot_id, chat_id, message, ...)` | async版 |
+| `send_message(bot_id, chat_id, message, ...)` | 空でない内部message辞書を送信。成功時 `{}` |
+| `async_send_message(bot_id, chat_id, message, ...)` | async版。同じpayload制約 |
 | `send_file(bot_id, chat_id, file_path, ...)` | upload後にファイル送信 |
 | `async_send_file(bot_id, chat_id, file_path, ...)` | async版 |
 | `send_mention(bot_id, chat_id, mentionee_id, ...)` | mention payloadを作って送信 |
@@ -236,7 +236,7 @@ SSE読取中の通信切断は `LINEOAError` として通知されます。
 |---|---|
 | `get_bot_accounts(..., limit=1000, no_filter=True)` | Bot一覧。`limit` は1〜1000、`no_filter` はbool |
 | `get_bot_account(bot_id, no_filter=True, ...)` | Bot情報。`no_filter` はbool |
-| `get_chats(bot_id, ..., folder_type="ALL", tag_ids="", auto_tag_ids="", limit=25, prioritize_pinned_chat=True)` | 条件付きチャット一覧。`limit` は1〜25 |
+| `get_chats(bot_id, ..., folder_type="ALL", tag_ids="", auto_tag_ids="", limit=25, prioritize_pinned_chat=True)` | 条件付きチャット一覧。`limit` は1〜25、`prioritize_pinned_chat` はbool |
 | `get_chat(bot_id, chat_id, ...)` | 1チャット |
 | `get_chat_members(bot_id, chat_id, limit=100, ...)` | グループチャットのメンバー。`limit` は1〜100 |
 | `async_get_chat_members(bot_id, chat_id, limit=100, ...)` | asyncグループメンバー。`limit` は1〜100 |
@@ -275,7 +275,7 @@ SSE読取中の通信切断は `LINEOAError` として通知されます。
 | `get_sticker_image(sticker_id, session=None)` | sticker bytes |
 | `save_sticker_image(sticker_id, file_path, session=None)` | sticker保存 |
 | `get_streaming_api_token(bot_id, ...)` | Streaming token、URL、version、有効期限など |
-| `streaming_state(bot_id, state, ...)` | 接続状態送信 |
+| `streaming_state(bot_id, state, ...)` | 接続状態送信。`connectionId` は空でない文字列、`idle` はbool |
 | `stream_events(streaming_api_token, device_type="", client_type="PC", ping_secs=60, last_event_id=None, ..., max_stream_seconds=82800, base_url="https://chat-streaming-api.line.biz", version="v2")` | event辞書をyieldするgenerator |
 | `set_typing(bot_id, chat_id, ...)` | 入力中状態送信 |
 
@@ -311,7 +311,7 @@ auth = AuthService(
 )
 ```
 
-`cookie_store_path` はログインCookieのJSON保存先、`request_timeout` は認証HTTPの秒数で、bool以外の有限の正数が必要です。`interactive_timeout` も同じ制約です。`channel_id` / `channel_secret` / `access_token` は別系統のtoken設定用で、Official Account ManagerのCookieログインとは別物です。
+`cookie_store_path` はログインCookieのJSON保存先、`request_timeout` は認証HTTPの秒数で、bool以外の有限の正数が必要です。`interactive_timeout` も同じ制約です。`stay_logged_in` と `interactive_login` はbool、`get_2fa_code_callback` は `None` またはcallable、明示的な `cookies` は辞書または `None` が必要です。不正値はSession作成や通信より前に `LINEOAError` になります。`channel_id` / `channel_secret` / `access_token` は別系統のtoken設定用で、Official Account ManagerのCookieログインとは別物です。
 
 ### 公開メソッド
 
