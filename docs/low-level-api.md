@@ -85,6 +85,7 @@ finally:
 | `listen_messages(bot_id, chat_id, on_message=None)` | チャット単位のSSEを継続受信 |
 
 送信先ID、Bot ID、メンション対象ID、テキスト本文、ファイルパスなどの必須値が `None` または空の場合は、通信やローカル送信枠の記録前に `LINEOAError` になります。
+`listen_messages()` の `on_message` は `None` またはcallableである必要があり、不正値はSSE接続前に `LINEOAError` になります。
 
 互換alias:
 
@@ -151,6 +152,7 @@ finally:
 自動再接続loopが必要なら `LineBot.listen()` を使用してください。
 
 `ping_secs` と `max_stream_seconds` は有限の正数である必要があります。SSEの接続中に発生した通信切断も `LINEOAError` として通知されます。
+`on_event` と `stop_event` は `None` またはcallableである必要があり、不正値はtoken取得やSSE接続前に `LINEOAError` になります。
 
 ### メディア
 
@@ -229,6 +231,7 @@ asyncメソッドは `cookies`, `xsrf_token`, `aiohttp.ClientSession` を受け�
 
 `listen_messages()` には停止callbackがないため、通常の受信には停止・再接続を管理できる `LineBot.listen()` を使用してください。
 SSE読取中の通信切断は `LINEOAError` として通知されます。
+`on_message` は `None` またはcallableである必要があり、不正値はSSE接続前に `LINEOAError` になります。
 
 ### Bot・チャット
 

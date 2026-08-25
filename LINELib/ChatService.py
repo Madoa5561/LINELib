@@ -132,6 +132,11 @@ class ChatService:
             raise LINEOAError("file_path is required")
         return normalized_path
 
+    @staticmethod
+    def _require_optional_callback(callback: Any, name: str) -> None:
+        if callback is not None and not callable(callback):
+            raise LINEOAError(f"{name} must be callable")
+
     def _base_headers(self) -> Dict[str, str]:
         return {
             **self.browser_headers,
@@ -482,6 +487,7 @@ class ChatService:
             on_message: Callback for new messages
         """
         self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
+        self._require_optional_callback(on_message, "on_message")
         url = f"https://chat.line.biz/api/v3/bots/{bot_id}/chats/{chat_id}/events"
         headers = self._browser_request_headers(**{
             "accept": "text/event-stream",
@@ -521,7 +527,7 @@ class ChatService:
                     if event.event not in (None, "chat"):
                         continue
                     data = event.payload
-                    if on_message:
+                    if on_message is not None:
                         on_message(data)
                     else:
                         lineoa_logger.info(f"[SSE chat event] {data}")

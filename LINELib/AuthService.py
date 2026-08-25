@@ -326,6 +326,10 @@ class AuthService:
 		"""Authenticate with saved cookies, direct HTTP, or an interactive browser."""
 		stay_logged_in = self._require_boolean(stay_logged_in, "stay_logged_in")
 		interactive_login = self._require_boolean(interactive_login, "interactive_login")
+		interactive_timeout = self._positive_finite_timeout(
+			interactive_timeout,
+			"interactive_timeout",
+		)
 		cookies = self._require_cookie_mapping(cookies)
 		if get_2fa_code_callback is not None and not callable(get_2fa_code_callback):
 			raise LINEOAError("get_2fa_code_callback must be callable.")

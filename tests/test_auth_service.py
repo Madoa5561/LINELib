@@ -148,6 +148,12 @@ class AuthServiceTests(unittest.TestCase):
                     None,
                     cookies=object(),
                 ),
+                lambda: service.login_with_email_and_2fa(
+                    "owner@example.com",
+                    "test-password",
+                    None,
+                    interactive_timeout="invalid",
+                ),
             )
 
             for operation in operations:

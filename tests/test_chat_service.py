@@ -610,6 +610,12 @@ class ChatServiceTests(unittest.TestCase):
                 session=session,
             ),
             lambda: service.listen_messages(None, "Uchat", session=session),
+            lambda: service.listen_messages(
+                "Ubot",
+                "Uchat",
+                on_message=1,
+                session=session,
+            ),
         )
 
         for operation in operations:

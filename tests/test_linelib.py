@@ -398,6 +398,30 @@ class LINELibTests(unittest.TestCase):
         library._chat_service.streaming_state.assert_not_called()
         library._chat_service.stream_events.assert_not_called()
 
+    def test_stream_callbacks_are_validated_before_network_work(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = make_library(Path(temp_dir) / "storage.json")
+
+            for callback_name in ("on_event", "stop_event"):
+                with self.subTest(callback_name=callback_name):
+                    with self.assertRaisesRegex(
+                        linelib_module.LINEOAError,
+                        callback_name,
+                    ):
+                        library.get_streaming_api_token_and_listen_stream_events(
+                            "Ubot",
+                            **{callback_name: 1},
+                        )
+
+            with self.assertRaisesRegex(
+                linelib_module.LINEOAError,
+                "on_event",
+            ):
+                library.listen_stream_events("stream-token", on_event=1)
+
+        library._chat_service.get_streaming_api_token.assert_not_called()
+        library._chat_service.stream_events.assert_not_called()
+
     def test_stop_after_token_fetch_prevents_stream_connection(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             library = make_library(Path(temp_dir) / "storage.json")

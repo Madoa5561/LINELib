@@ -76,6 +76,11 @@ class LINELib:
             raise LINEOAError("file_path is required")
         return normalized_path
 
+    @staticmethod
+    def _require_optional_callback(callback: Any, name: str) -> None:
+        if callback is not None and not callable(callback):
+            raise LINEOAError(f"{name} must be callable")
+
     def _default_bot_id(self) -> Optional[str]:
         bot_ids = getattr(self, "_bot_ids", None)
         if bot_ids is None:
@@ -221,6 +226,8 @@ class LINELib:
         :return: 最後に受信したevent id（再接続時に使用）
         """
         self._require_non_empty_strings(bot_id=bot_id)
+        self._require_optional_callback(on_event, "on_event")
+        self._require_optional_callback(stop_event, "stop_event")
         try:
             timing_config = ListenConfig(
                 ping_secs=ping_secs,
@@ -279,7 +286,7 @@ class LINELib:
             event_id = event.get("id")
             if event_id is not None:
                 last_event_id = event_id or None
-            if on_event:
+            if on_event is not None:
                 on_event(event)
         return last_event_id
 
@@ -510,6 +517,7 @@ class LINELib:
         :param last_event_id: 前回受信したイベントID（省略可）
         :param on_event: イベント受信時のコールバック (dict)
         """
+        self._require_optional_callback(on_event, "on_event")
         for event in self._chat_service.stream_events(
             streaming_api_token,
             device_type=device_type,
@@ -522,7 +530,7 @@ class LINELib:
             base_url=base_url,
             version=version,
         ):
-            if on_event:
+            if on_event is not None:
                 on_event(event)
 
     def get_chat_messages(self, bot_id: str, chat_id: str, limit: int = 50, before: Optional[str] = None, after: Optional[str] = None) -> Dict[str, Any]:
