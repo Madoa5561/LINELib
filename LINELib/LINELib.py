@@ -81,6 +81,18 @@ class LINELib:
         if callback is not None and not callable(callback):
             raise LINEOAError(f"{name} must be callable")
 
+    @staticmethod
+    def _require_finite_timestamp(timestamp: Any) -> Any:
+        if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)):
+            raise LINEOAError("timestamp must be a finite number")
+        try:
+            is_finite = math.isfinite(timestamp)
+        except OverflowError as error:
+            raise LINEOAError("timestamp must be a finite number") from error
+        if not is_finite:
+            raise LINEOAError("timestamp must be a finite number")
+        return timestamp
+
     def _default_bot_id(self) -> Optional[str]:
         bot_ids = getattr(self, "_bot_ids", None)
         if bot_ids is None:
@@ -107,6 +119,7 @@ class LINELib:
         return data.get("FinalsendTime")
 
     def set_final_send_time(self, timestamp):
+        timestamp = self._require_finite_timestamp(timestamp)
         try:
             update_json(
                 self.storage,
@@ -122,6 +135,8 @@ class LINELib:
         return data.get("SendTimestamps", [])
 
     def add_send_timestamp(self, timestamp: float):
+        timestamp = self._require_finite_timestamp(timestamp)
+
         def add_timestamp(data: Dict[str, Any]) -> None:
             timestamps = self._valid_recent_timestamps(data, timestamp)
             timestamps.append(float(timestamp))
@@ -424,6 +439,8 @@ class LINELib:
         )
 
     def normalize_message_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(event, dict):
+            raise LINEOAError("event must be an object")
         sse_event = SSEEvent(id=event.get("id"), event=event.get("type"), data=json.dumps(event.get("payload", {}), ensure_ascii=False))
         normalized = sse_event.normalized_message()
         if normalized is None:

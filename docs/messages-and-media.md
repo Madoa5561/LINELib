@@ -153,7 +153,7 @@ print(normalized.get("content_hash"))
 print(normalized.get("file_name"))
 ```
 
-正規化形式の全フィールドは[イベントとPolling](events-and-polling.md#正規化メッセージ)を参照してください。メッセージでないイベントは `{"kind": "unknown", "raw_event": event}` になります。
+正規化形式の全フィールドは[イベントとPolling](events-and-polling.md#正規化メッセージ)を参照してください。メッセージでないイベントは `{"kind": "unknown", "raw_event": event}` になります。`event` は辞書である必要があり、それ以外はファイル操作や通信より前に `LINEOAError` になります。
 
 ## 受信メディアを保存する
 

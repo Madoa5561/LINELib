@@ -164,7 +164,7 @@ finally:
 | `save_sticker_image(sticker_id, file_path)` | `str` | stickerを保存 |
 | `save_message_media(event, file_path)` | `str` | 種別に応じてcontent、sticker、link JSONを保存 |
 
-content系の `bot_id` / `content_hash` とsticker系の `sticker_id` は空でない文字列、保存系の `file_path` は空でない文字列または `os.PathLike` が必要です。不正値は通信・ファイル操作前に `LINEOAError` になります。
+content系の `bot_id` / `content_hash` とsticker系の `sticker_id` は空でない文字列、保存系の `file_path` は空でない文字列または `os.PathLike`、正規化・保存対象の `event` は辞書である必要があります。不正値は通信・ファイル操作前に `LINEOAError` になります。
 
 ### ローカル状態
 
@@ -178,6 +178,7 @@ content系の `bot_id` / `content_hash` とsticker系の `sticker_id` は空で�
 | `reset_rate_limit()` | ローカル送信時刻を空にする |
 
 これらは送信wrapperが内部的に使います。`ratelimit_after` は名前に反して「残り秒数」ではなく、現在の実装では制限解除予定のUNIX timestampです。
+`set_final_send_time()` と `add_send_timestamp()` の `timestamp` はbool以外の有限な `int` または `float` が必要です。不正値は保存JSONを変更する前に `LINEOAError` になります。
 
 ### propertyと補助オブジェクト
 

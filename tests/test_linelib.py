@@ -48,6 +48,28 @@ class LINELibTests(unittest.TestCase):
             library._chat_service.save_content_preview.assert_not_called()
             library._chat_service.save_sticker_image.assert_not_called()
 
+    def test_media_event_must_be_an_object_before_file_or_service_work(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = make_library(Path(temp_dir) / "storage.json")
+            target_path = Path(temp_dir) / "media"
+
+            for event in (None, [], "event"):
+                with self.subTest(event=event):
+                    with self.assertRaisesRegex(
+                        linelib_module.LINEOAError,
+                        "event",
+                    ):
+                        library.normalize_message_event(event)
+                    with self.assertRaisesRegex(
+                        linelib_module.LINEOAError,
+                        "event",
+                    ):
+                        library.save_message_media(event, str(target_path))
+
+            self.assertFalse(target_path.exists())
+            library._chat_service.save_content_preview.assert_not_called()
+            library._chat_service.save_sticker_image.assert_not_called()
+
     def test_default_bot_uses_validated_chat_enabled_ids(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             library = make_library(Path(temp_dir) / "storage.json")
@@ -237,6 +259,25 @@ class LINELibTests(unittest.TestCase):
 
         self.assertEqual([], timestamps)
         self.assertEqual([], stored["SendTimestamps"])
+
+    def test_timestamp_setters_reject_invalid_values_without_storage_changes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            storage_path = Path(temp_dir) / "storage.json"
+            library = make_library(storage_path)
+            original_storage = storage_path.read_text(encoding="utf-8")
+
+            for operation in (library.set_final_send_time, library.add_send_timestamp):
+                for value in (float("nan"), float("inf"), True, "100"):
+                    with self.subTest(operation=operation, value=value):
+                        with self.assertRaisesRegex(
+                            linelib_module.LINEOAError,
+                            "timestamp",
+                        ):
+                            operation(value)
+                        self.assertEqual(
+                            original_storage,
+                            storage_path.read_text(encoding="utf-8"),
+                        )
 
     def test_invalid_send_values_do_not_reserve_rate_limit_slot(self):
         with tempfile.TemporaryDirectory() as temp_dir:
