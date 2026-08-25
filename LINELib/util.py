@@ -35,6 +35,21 @@ def link_group_and_chat(group_id: str, chat_id: str):
         chat_to_group = data.setdefault("chat_to_group", {})
         if not isinstance(group_to_chat, dict) or not isinstance(chat_to_group, dict):
             raise ValueError("ID map must contain group_to_chat and chat_to_group objects")
+
+        previous_chat_id = group_to_chat.get(group_id)
+        if (
+            previous_chat_id != chat_id
+            and chat_to_group.get(previous_chat_id) == group_id
+        ):
+            del chat_to_group[previous_chat_id]
+
+        previous_group_id = chat_to_group.get(chat_id)
+        if (
+            previous_group_id != group_id
+            and group_to_chat.get(previous_group_id) == chat_id
+        ):
+            del group_to_chat[previous_group_id]
+
         group_to_chat[group_id] = chat_id
         chat_to_group[chat_id] = group_id
 

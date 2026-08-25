@@ -8,6 +8,24 @@ from LINELib import util
 
 
 class UtilTests(unittest.TestCase):
+    def test_relinking_removes_stale_reverse_mappings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            map_path = Path(temp_dir) / "id_map.json"
+
+            with patch.object(util, "_IDMAP_PATH", str(map_path)):
+                util.link_group_and_chat("group-a", "chat-1")
+                util.link_group_and_chat("group-a", "chat-2")
+
+                self.assertIsNone(util.get_groupid_from_chatid("chat-1"))
+                self.assertEqual("chat-2", util.get_chatid_from_groupid("group-a"))
+                self.assertEqual("group-a", util.get_groupid_from_chatid("chat-2"))
+
+                util.link_group_and_chat("group-b", "chat-2")
+
+                self.assertIsNone(util.get_chatid_from_groupid("group-a"))
+                self.assertEqual("chat-2", util.get_chatid_from_groupid("group-b"))
+                self.assertEqual("group-b", util.get_groupid_from_chatid("chat-2"))
+
     def test_concurrent_id_map_updates_are_not_lost(self):
         worker_count = 12
         load_barrier = threading.Barrier(worker_count)
