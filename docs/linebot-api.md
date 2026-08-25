@@ -44,7 +44,7 @@ bot = LineBot(
 | `get_2fa_code_callback` | `None` | 6桁メールOTPを返す引数なし関数。`None` またはcallable |
 | `interactive_login` | `False` | 可視ブラウザの公式ログイン画面を使うか。boolのみ |
 | `browser_channel` | `"chrome"` | `chrome` または `msedge`。Cookie Sessionの認証用headerにも反映 |
-| `interactive_timeout` | `300` | 対話ログイン全体の待機秒数。bool以外の有限の正数 |
+| `interactive_timeout` | `300` | ブラウザ起動から公式ログイン画面での認証完了までの待機秒数。OTP callbackと後続HTTP確認は対象外。bool以外の有限の正数 |
 
 `email` と `password` は必ず両方を渡してください。片方だけではメールログインが開始されません。保存Cookieが有効なら、認証情報を渡していてもCookieが先に使われます。
 

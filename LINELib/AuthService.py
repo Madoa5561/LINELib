@@ -475,13 +475,25 @@ class AuthService:
 			) from error
 
 		browser_headers = self._browser_headers_for_channel(browser_channel)
+		deadline = time.monotonic() + interactive_timeout
+
+		def remaining_timeout_ms(maximum: Optional[int] = None) -> int:
+			remaining = deadline - time.monotonic()
+			if remaining <= 0:
+				raise LINEOAError("The interactive login did not finish before the timeout.")
+			timeout_ms = max(1, int(remaining * 1000))
+			return min(timeout_ms, maximum) if maximum is not None else timeout_ms
 
 		browser_cookies: List[Dict[str, Any]] = []
 		account_xsrf_token: Optional[str] = None
 		final_url = ""
 		with self._wrap_interactive_login_errors(PlaywrightError), sync_playwright() as playwright:
 			try:
-				browser = playwright.chromium.launch(channel=browser_channel, headless=False)
+				browser = playwright.chromium.launch(
+					channel=browser_channel,
+					headless=False,
+					timeout=remaining_timeout_ms(),
+				)
 			except Exception as error:
 				raise LINEOAError(f"Failed to launch the interactive browser channel '{browser_channel}': {error}") from error
 			try:
@@ -524,25 +536,39 @@ class AuthService:
 				page.goto(
 					self.MANAGER_URL,
 					wait_until="domcontentloaded",
-					timeout=int(interactive_timeout * 1000),
+					timeout=remaining_timeout_ms(),
 				)
 
 				email_input = page.locator('input[type="email"]:visible').first
 				try:
-					email_input.wait_for(state="visible", timeout=3000)
+					email_input.wait_for(
+						state="visible",
+						timeout=remaining_timeout_ms(3000),
+					)
 				except PlaywrightTimeoutError:
 					email_button = page.locator('[data-email-login-button]:visible').first
-					email_button.click(timeout=10000)
-					email_input.wait_for(state="visible", timeout=10000)
+					email_button.click(timeout=remaining_timeout_ms(10000))
+					email_input.wait_for(
+						state="visible",
+						timeout=remaining_timeout_ms(10000),
+					)
 
 				password_input = page.locator('input[type="password"]:visible').first
-				password_input.wait_for(state="visible", timeout=10000)
-				email_input.fill(email)
-				password_input.fill(password)
+				password_input.wait_for(
+					state="visible",
+					timeout=remaining_timeout_ms(10000),
+				)
+				email_input.fill(email, timeout=remaining_timeout_ms(10000))
+				password_input.fill(password, timeout=remaining_timeout_ms(10000))
 				stay_logged_in_input = page.locator('#stayLoggedIn:visible, input[name="stayLoggedIn"]:visible').first
-				if stay_logged_in_input.count() and stay_logged_in_input.is_checked() != stay_logged_in:
+				if (
+					stay_logged_in_input.count()
+					and stay_logged_in_input.is_checked(
+						timeout=remaining_timeout_ms(10000)
+					) != stay_logged_in
+				):
 					page.locator('toly-checkbox[data-email-login-stay-logged-in]:visible').first.click(
-						timeout=10000
+						timeout=remaining_timeout_ms(10000)
 					)
 
 				lineoa_logger.info(
@@ -557,13 +583,14 @@ class AuthService:
 				try:
 					with page.expect_response(
 						lambda response: response.url.split("?", 1)[0] == self.EMAIL_LOGIN_URL,
-						timeout=min(15000, int(interactive_timeout * 1000)),
+						timeout=remaining_timeout_ms(15000),
 					):
-						form_button_target.click(timeout=10000)
+						form_button_target.click(
+							timeout=remaining_timeout_ms(10000)
+						)
 				except PlaywrightTimeoutError as error:
 					raise LINEOAError("The interactive login form did not send an email login request.") from error
 
-				deadline = time.monotonic() + interactive_timeout
 				while True:
 					if re.match(
 						r"^https://(?:manager|chat)\.line\.biz/|^https://account\.line\.biz/login/verification",

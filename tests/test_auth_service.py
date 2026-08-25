@@ -196,16 +196,37 @@ class AuthServiceTests(unittest.TestCase):
         )
         self.assertIs(False, session.post.call_args.kwargs["json"]["stayLoggedIn"])
 
-    def test_interactive_browser_errors_are_wrapped(self):
+    def test_interactive_browser_errors_are_wrapped_and_waits_are_bounded(self):
         class BrowserTransportError(Exception):
             pass
+
+        class PlaywrightTimeoutError(Exception):
+            pass
+
+        browser_calls = []
+
+        class FakeLocator:
+            @property
+            def first(self):
+                return self
+
+            def wait_for(self, **kwargs):
+                browser_calls.append(("email_wait", kwargs["timeout"]))
+                raise PlaywrightTimeoutError()
+
+            def click(self, **kwargs):
+                browser_calls.append(("email_button_click", kwargs["timeout"]))
+                raise BrowserTransportError("browser disconnected")
 
         class FakePage:
             def on(self, *args):
                 return None
 
             def goto(self, *args, **kwargs):
-                raise BrowserTransportError("browser disconnected")
+                browser_calls.append(("goto", kwargs["timeout"]))
+
+            def locator(self, selector):
+                return FakeLocator()
 
         class FakeContext:
             def new_page(self):
@@ -220,6 +241,7 @@ class AuthServiceTests(unittest.TestCase):
 
         class FakeChromium:
             def launch(self, **kwargs):
+                browser_calls.append(("launch", kwargs["timeout"]))
                 return FakeBrowser()
 
         class FakePlaywright:
@@ -234,7 +256,7 @@ class AuthServiceTests(unittest.TestCase):
 
         fake_sync_api = types.ModuleType("playwright.sync_api")
         fake_sync_api.Error = BrowserTransportError
-        fake_sync_api.TimeoutError = type("PlaywrightTimeoutError", (Exception,), {})
+        fake_sync_api.TimeoutError = PlaywrightTimeoutError
         fake_sync_api.sync_playwright = lambda: FakeManager()
         fake_package = types.ModuleType("playwright")
         fake_package.sync_api = fake_sync_api
@@ -257,6 +279,11 @@ class AuthServiceTests(unittest.TestCase):
                 )
 
         self.assertIsInstance(raised.exception.__cause__, BrowserTransportError)
+        self.assertEqual(
+            {"launch", "goto", "email_wait", "email_button_click"},
+            {name for name, _ in browser_calls},
+        )
+        self.assertTrue(all(0 < timeout <= 1000 for _, timeout in browser_calls))
 
     def test_email_login_uses_official_http_flow_and_saves_cookies(self):
         with tempfile.TemporaryDirectory() as temp_dir:
