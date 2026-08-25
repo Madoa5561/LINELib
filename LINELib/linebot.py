@@ -251,7 +251,8 @@ class LineBot:
             try:
                 handler(event)
             except Exception as e:
-                lineoa_logger.exception(f"handler error ({handler.__name__}): {e}")
+                handler_name = getattr(handler, "__name__", type(handler).__name__)
+                lineoa_logger.exception(f"handler error ({handler_name}): {e}")
 
     def _resolve_bot_id(self, botid=None):
         if botid:

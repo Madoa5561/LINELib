@@ -1,3 +1,4 @@
+import functools
 import threading
 import unittest
 from unittest.mock import Mock, PropertyMock, patch
@@ -177,6 +178,24 @@ class LineBotTests(unittest.TestCase):
         bot.dispatch("chat", {"payload": {"subEvent": "message", "payload": {"type": "message"}}})
 
         self.assertEqual(1, len(received))
+
+    def test_handler_error_is_isolated_for_callable_without_name(self):
+        bot = make_bot({"kind": "text", "message_type": "text"})
+
+        def raise_handler_error(message, event):
+            raise RuntimeError(message)
+
+        bot.handlers["on_text"] = functools.partial(
+            raise_handler_error,
+            "expected handler error",
+        )
+
+        with patch("LINELib.linebot.lineoa_logger.exception") as log_exception:
+            bot.dispatch("chat", {"payload": {}})
+
+        log_exception.assert_called_once()
+        self.assertIn("partial", log_exception.call_args.args[0])
+        self.assertIn("expected handler error", log_exception.call_args.args[0])
 
     def test_documented_media_methods_delegate_to_library(self):
         bot = make_bot({"kind": "unknown"})
