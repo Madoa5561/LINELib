@@ -97,6 +97,24 @@ class LINELibTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     create_config()
 
+    def test_configs_reject_boolean_and_fractional_integer_values(self):
+        invalid_configs = (
+            lambda: RateLimitConfig(limit=True),
+            lambda: RateLimitConfig(limit=1.5),
+            lambda: RateLimitConfig(window=True),
+            lambda: ListenConfig(ping_secs=True),
+            lambda: ListenConfig(ping_secs=1.5),
+            lambda: ListenConfig(reconnect_interval=True),
+            lambda: ListenConfig(max_reconnects=True),
+            lambda: ListenConfig(max_reconnects=1.5),
+            lambda: ListenConfig(max_stream_seconds=True),
+        )
+
+        for create_config in invalid_configs:
+            with self.subTest(create_config=create_config):
+                with self.assertRaises(ValueError):
+                    create_config()
+
     def test_rate_limit_config_normalizes_numbers_and_rejects_non_boolean(self):
         config = RateLimitConfig(limit="3", window="2.5", enabled=True)
 
@@ -419,6 +437,24 @@ class LINELibTests(unittest.TestCase):
                     "max_stream_seconds"
                 ],
             )
+
+            library._chat_service.get_streaming_api_token.reset_mock()
+            for options in (
+                {"ping_secs": True},
+                {"ping_secs": 1.5},
+                {"max_stream_seconds": True},
+            ):
+                with self.subTest(options=options):
+                    with self.assertRaisesRegex(
+                        linelib_module.LINEOAError,
+                        "timing",
+                    ):
+                        library.get_streaming_api_token_and_listen_stream_events(
+                            "Ubot",
+                            **options,
+                        )
+
+            library._chat_service.get_streaming_api_token.assert_not_called()
 
             for expired_at in (10**400, float("inf"), "invalid", True):
                 with self.subTest(expired_at=expired_at):

@@ -312,6 +312,32 @@ class ChatServiceTests(unittest.TestCase):
         self.assertEqual("secret", session.cookies.get("chat-session", domain="chat.line.biz"))
         self.assertEqual(30, kwargs["timeout"])
 
+    def test_streaming_operations_reject_missing_ids_before_request(self):
+        service = ChatService()
+        session = requests.Session()
+        session.get = Mock(return_value=StreamResponse())
+        session.post = Mock(return_value=SyncResponse({"streamingApiToken": "token"}))
+        session.put = Mock(return_value=SyncResponse())
+        operations = (
+            lambda: service.get_streaming_api_token("", session=session),
+            lambda: service.streaming_state(
+                "",
+                {"connectionId": "connection", "idle": True},
+                session=session,
+            ),
+            lambda: service.set_typing("Ubot", "", session=session),
+            lambda: next(service.stream_events(None, session=session)),
+        )
+
+        for operation in operations:
+            with self.subTest(operation=operation):
+                with self.assertRaisesRegex(LINEOAError, "required"):
+                    operation()
+
+        session.get.assert_not_called()
+        session.post.assert_not_called()
+        session.put.assert_not_called()
+
     def test_send_message_uses_injected_edge_profile(self):
         browser_headers = {
             "User-Agent": "edge-user-agent",
@@ -348,8 +374,11 @@ class ChatServiceTests(unittest.TestCase):
     def test_stream_events_rejects_non_finite_timing_values(self):
         invalid_options = (
             {"ping_secs": float("inf")},
+            {"ping_secs": True},
+            {"ping_secs": 1.5},
             {"max_stream_seconds": float("nan")},
             {"max_stream_seconds": float("inf")},
+            {"max_stream_seconds": True},
         )
 
         for options in invalid_options:
@@ -407,6 +436,82 @@ class ChatServiceTests(unittest.TestCase):
                     service.get_chat_members(bot_id, chat_id, session=session)
 
         session.get.assert_not_called()
+
+    def test_history_and_members_reject_invalid_queries_before_request(self):
+        service = ChatService()
+        session = requests.Session()
+        session.get = Mock(return_value=SyncResponse({"list": []}))
+        operations = (
+            lambda: service.get_chat_messages(
+                "Ubot",
+                "Uchat",
+                limit=0,
+                session=session,
+                xsrf_token="xsrf",
+            ),
+            lambda: service.get_chat_messages(
+                "Ubot",
+                "Uchat",
+                limit=101,
+                session=session,
+                xsrf_token="xsrf",
+            ),
+            lambda: service.get_chat_messages(
+                "Ubot",
+                "Uchat",
+                before="",
+                session=session,
+                xsrf_token="xsrf",
+            ),
+            lambda: service.get_chat_messages(
+                "Ubot",
+                "Uchat",
+                after=0,
+                session=session,
+                xsrf_token="xsrf",
+            ),
+            lambda: service.get_chat_members(
+                "Ubot",
+                "Uchat",
+                limit="1&extra=true",
+                session=session,
+            ),
+            lambda: service.listen_messages(None, "Uchat", session=session),
+        )
+
+        for operation in operations:
+            with self.subTest(operation=operation):
+                with self.assertRaises(LINEOAError):
+                    operation()
+
+        session.get.assert_not_called()
+
+    def test_history_and_members_normalize_valid_queries(self):
+        service = ChatService()
+        session = requests.Session()
+        session.get = Mock(return_value=SyncResponse({"list": []}))
+        opaque_cursor = "opaque-cursor-token"
+
+        service.get_chat_messages(
+            "Ubot",
+            "Uchat",
+            limit="100",
+            before=opaque_cursor,
+            session=session,
+            xsrf_token="xsrf",
+        )
+
+        _, history_kwargs = session.get.call_args
+        self.assertEqual(
+            {"limit": 100, "before": opaque_cursor},
+            history_kwargs["params"],
+        )
+
+        service.get_chat_members("Ubot", "Uchat", limit="100", session=session)
+
+        members_url, members_kwargs = session.get.call_args
+        self.assertNotIn("?", members_url)
+        self.assertEqual({"limit": 100}, members_kwargs["params"])
 
     def test_stream_events_only_forwards_chat_domain_cookies(self):
         service = ChatService()
@@ -640,6 +745,42 @@ class AsyncChatServiceTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(LINEOAError, "required"):
             await service.async_get_chat_members("Ubot", "", session=session)
+
+        self.assertEqual([], session.calls)
+
+    async def test_async_history_and_members_reject_invalid_queries(self):
+        service = ChatService()
+        session = FakeAioSession()
+        operations = (
+            lambda: service.async_get_chat_messages(
+                "",
+                "Uchat",
+                session=session,
+            ),
+            lambda: service.async_get_chat_messages(
+                "Ubot",
+                "Uchat",
+                limit=True,
+                session=session,
+            ),
+            lambda: service.async_get_chat_messages(
+                "Ubot",
+                "Uchat",
+                before="",
+                session=session,
+            ),
+            lambda: service.async_get_chat_members(
+                "Ubot",
+                "Uchat",
+                limit=101,
+                session=session,
+            ),
+        )
+
+        for operation in operations:
+            with self.subTest(operation=operation):
+                with self.assertRaises(LINEOAError):
+                    await operation()
 
         self.assertEqual([], session.calls)
 

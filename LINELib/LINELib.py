@@ -4,7 +4,7 @@ from .ChatService import ChatService
 from .util import ratelimiter, ratelimit_after
 from .exceptions import LINEOAError
 from .sse import SSEEvent
-from .config import RateLimitConfig
+from .config import ListenConfig, RateLimitConfig
 from .session_utils import cookie_header_for_url, get_xsrf_token
 from .storage import _write_json_unlocked, read_json, update_json, write_json
 import os
@@ -220,12 +220,16 @@ class LINELib:
         :param stop_event: 停止判定コールバック。Trueを返すとループを抜ける
         :return: 最後に受信したevent id（再接続時に使用）
         """
+        self._require_non_empty_strings(bot_id=bot_id)
         try:
-            max_stream_seconds = float(max_stream_seconds)
-        except (TypeError, ValueError, OverflowError) as error:
+            timing_config = ListenConfig(
+                ping_secs=ping_secs,
+                max_stream_seconds=max_stream_seconds,
+            )
+        except ValueError as error:
             raise LINEOAError("Invalid LINE streaming timing configuration") from error
-        if not math.isfinite(max_stream_seconds) or max_stream_seconds <= 0:
-            raise LINEOAError("Invalid LINE streaming timing configuration")
+        ping_secs = timing_config.ping_secs
+        max_stream_seconds = timing_config.max_stream_seconds
         if stop_event is not None and stop_event():
             return last_event_id
         token_info = self._chat_service.get_streaming_api_token(bot_id, session=self._session, xsrf_token=self._xsrf_token)

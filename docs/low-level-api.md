@@ -81,7 +81,7 @@ finally:
 | `send_file(chat_id, file_path, bot_id=None)` | ファイル送信 |
 | `send_mention(bot_id, chat_id, mentionee_id)` | メンション送信 |
 | `create_and_send_flex(bot_id, at_id, chat_id, title, image_url, tag_name="", tag_color="info", description="", action_label="", action_text="", delete_after_send=True)` | カード型メッセージ作成・送信 |
-| `get_chat_messages(bot_id, chat_id, limit=50, before=None, after=None)` | 履歴取得 |
+| `get_chat_messages(bot_id, chat_id, limit=50, before=None, after=None)` | 履歴取得。`limit` は1〜100、`before` / `after` はレスポンス由来の非空カーソル文字列（正の整数も可） |
 | `listen_messages(bot_id, chat_id, on_message=None)` | チャット単位のSSEを継続受信 |
 
 送信先ID、Bot ID、メンション対象ID、テキスト本文、ファイルパスなどの必須値が `None` または空の場合は、通信やローカル送信枠の記録前に `LINEOAError` になります。
@@ -106,7 +106,7 @@ finally:
 | `async_send_message(user_id, context, bot_id=None, quoteToken=None)` | asyncテキスト送信 |
 | `async_send_file(chat_id, file_path, bot_id=None)` | async upload・ファイル送信 |
 | `async_send_mention(bot_id, chat_id, mentionee_id)` | asyncメンション送信 |
-| `async_get_chat_messages(bot_id, chat_id, limit=50, before=None, after=None)` | async履歴取得 |
+| `async_get_chat_messages(bot_id, chat_id, limit=50, before=None, after=None)` | async履歴取得。`limit` は1〜100、`before` / `after` はレスポンス由来の非空カーソル文字列（正の整数も可） |
 
 いずれも認証済みrequests Sessionから `chat.line.biz` にdomain/pathが適合するCookieだけを抽出し、`aiohttp` 側へ渡します。送信3種は同期APIと同じローカルレート制限を使います。
 
@@ -116,7 +116,7 @@ finally:
 |---|---|
 | `get_bots()` | `BotsInfo` を返す |
 | `get_chats(bot_id, limit)` | チャット一覧の生JSON。`limit` は1〜25 |
-| `get_chat_members(bot_id, chat_id, limit=100)` | グループチャットのメンバー一覧。`bot_id` と `chat_id` は必須 |
+| `get_chat_members(bot_id, chat_id, limit=100)` | グループチャットのメンバー一覧。`bot_id` と `chat_id` は必須、`limit` は1〜100 |
 | `get_me()` | ログイン利用者 |
 | `get_bot_account(bot_id, no_filter=True)` | Bot情報 |
 | `get_csrf_token()` | CSRF endpointのJSON |
@@ -220,8 +220,8 @@ asyncメソッドは `cookies`, `xsrf_token`, `aiohttp.ClientSession` を受け�
 | `send_file(bot_id, chat_id, file_path, ...)` | upload後にファイル送信 |
 | `async_send_file(bot_id, chat_id, file_path, ...)` | async版 |
 | `send_mention(bot_id, chat_id, mentionee_id, ...)` | mention payloadを作って送信 |
-| `get_chat_messages(bot_id, chat_id, ..., limit=50, before=None, after=None)` | 履歴 |
-| `async_get_chat_messages(bot_id, chat_id, ..., limit=50, before=None, after=None)` | async履歴 |
+| `get_chat_messages(bot_id, chat_id, ..., limit=50, before=None, after=None)` | 履歴。`limit` は1〜100、カーソルはレスポンス由来の非空文字列（正の整数も可） |
+| `async_get_chat_messages(bot_id, chat_id, ..., limit=50, before=None, after=None)` | async履歴。同期版と同じ入力制約 |
 | `listen_messages(bot_id, chat_id, on_message=None, ...)` | チャット単位のSSEを継続受信 |
 | `mark_as_read(bot_id, chat_id, message_id, timestamp=None, ...)` | 指定メッセージまで既読 |
 
@@ -236,8 +236,8 @@ SSE読取中の通信切断は `LINEOAError` として通知されます。
 | `get_bot_account(bot_id, no_filter=True, ...)` | Bot情報 |
 | `get_chats(bot_id, ..., folder_type="ALL", tag_ids="", auto_tag_ids="", limit=25, prioritize_pinned_chat=True)` | 条件付きチャット一覧。`limit` は1〜25 |
 | `get_chat(bot_id, chat_id, ...)` | 1チャット |
-| `get_chat_members(bot_id, chat_id, limit=100, ...)` | グループチャットのメンバー |
-| `async_get_chat_members(bot_id, chat_id, limit=100, ...)` | asyncグループメンバー |
+| `get_chat_members(bot_id, chat_id, limit=100, ...)` | グループチャットのメンバー。`limit` は1〜100 |
+| `async_get_chat_members(bot_id, chat_id, limit=100, ...)` | asyncグループメンバー。`limit` は1〜100 |
 | `get_pinned_messages(bot_id, chat_id, ...)` | ピン留め |
 | `get_activities(bot_id, chat_id, limit=1, ...)` | activity |
 | `get_notes(bot_id, chat_id, limit=20, with_total=True, ...)` | note |
@@ -276,6 +276,8 @@ SSE読取中の通信切断は `LINEOAError` として通知されます。
 | `streaming_state(bot_id, state, ...)` | 接続状態送信 |
 | `stream_events(streaming_api_token, device_type="", client_type="PC", ping_secs=60, last_event_id=None, ..., max_stream_seconds=82800, base_url="https://chat-streaming-api.line.biz", version="v2")` | event辞書をyieldするgenerator |
 | `set_typing(bot_id, chat_id, ...)` | 入力中状態送信 |
+
+SSEの `ping_secs` は正の整数、`max_stream_seconds` はbool以外の有限の正数が必要です。欠落token・Bot ID・chat IDや不正な時間設定は、token取得やSSE接続より前に `LINEOAError` になります。
 
 ### カード型Flex
 
@@ -387,6 +389,8 @@ config = ListenConfig(
 
 frozen dataclassです。`ping_secs >= 1`、`reconnect_interval >= 0`、`max_reconnects` は `None` または0以上、`max_stream_seconds > 0` を検証します。`LineBot` は個別引数から内部的に作成します。
 
+`ping_secs` と `max_reconnects` の小数、および各数値項目へのbool指定は `ValueError` になります。整数・有限小数の数値文字列は正規化されます。
+
 ### RateLimitConfig
 
 ```python
@@ -395,7 +399,7 @@ from LINELib import RateLimitConfig
 config = RateLimitConfig(limit=18, window=60, enabled=True)
 ```
 
-frozen dataclassで、`limit >= 1`、`window > 0`、`enabled` がboolであることを検証し、数値を `int` / `float` へ正規化します。現在の `LineBot` / `LINELib` コンストラクタがこのobjectを直接受け取るわけではなく、`rate_limit`, `rate_limit_window`, `rate_limit_enabled` の個別引数を使います。
+frozen dataclassで、`limit >= 1`、`window > 0`、`enabled` がboolであることを検証し、数値を `int` / `float` へ正規化します。整数項目の小数と、数値項目へのbool指定は受け付けません。現在の `LineBot` / `LINELib` コンストラクタがこのobjectを直接受け取るわけではなく、`rate_limit`, `rate_limit_window`, `rate_limit_enabled` の個別引数を使います。
 
 ## 例外
 

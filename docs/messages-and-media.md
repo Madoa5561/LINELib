@@ -123,9 +123,10 @@ members = bot.getMembers(
 
 - `getBots()` は `BotsInfo` を返し、`.ids` で `{basicSearchIdまたは名前: bot_id}` を取得できます。
 - `getChats()` の `limit` は1〜25で、省略時は25です。
+- `getChatMessages()` と `getMembers()` の `limit` は1〜100です。
 - `getChats()`、`getChatMessages()`、`getMembers()` はLINE内部APIのJSONを `dict` のまま返します。
 - `getMembers()` はグループチャット向けです。1対1チャットではLINE側が400を返す場合があります。
-- `before` / `after` は履歴APIへ渡すページング値です。具体的な値は直前のレスポンスに含まれる情報を使用します。
+- `before` / `after` は履歴APIへ渡すページングカーソルです。LINEのレスポンスに含まれる不透明な文字列を変更せず使用してください。従来互換として正の整数も指定できます。空文字、bool、0、その他の型は通信前に `LINEOAError` になります。
 - 内部APIの生レスポンスキーはLINE側の変更対象です。存在確認には `.get()` を使用してください。
 
 ## 管理情報の取得

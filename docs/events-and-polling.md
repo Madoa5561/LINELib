@@ -2,6 +2,8 @@
 
 `LineBot.listen()` は、Streaming API tokenの取得、SSE接続、イベントの辞書化、ハンドラへの振り分け、切断時の再接続をまとめて行います。
 
+`ping_secs` と `max_reconnects` は整数で指定し、小数やboolは受け付けません。`reconnect_interval` と `max_stream_seconds` は有限の数値で、boolは受け付けません。
+
 ## 最小構成
 
 ```python

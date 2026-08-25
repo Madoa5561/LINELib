@@ -37,6 +37,8 @@ class ChatService:
 
     @staticmethod
     def _positive_finite_timeout(value: Any, name: str) -> float:
+        if isinstance(value, bool):
+            raise LINEOAError(f"{name} must be a positive finite number")
         try:
             parsed_value = float(value)
         except (TypeError, ValueError, OverflowError) as error:
@@ -84,6 +86,24 @@ class ChatService:
         ):
             raise LINEOAError(f"{name} must be a positive integer")
         return parsed_value
+
+    @staticmethod
+    def _pagination_cursor(value: Any, name: str) -> Union[str, int]:
+        if isinstance(value, bool):
+            raise LINEOAError(
+                f"{name} must be a non-empty cursor string or positive integer"
+            )
+        if isinstance(value, str):
+            if not value.strip():
+                raise LINEOAError(
+                    f"{name} must be a non-empty cursor string or positive integer"
+                )
+            return value
+        if isinstance(value, int) and value > 0:
+            return value
+        raise LINEOAError(
+            f"{name} must be a non-empty cursor string or positive integer"
+        )
 
     @staticmethod
     def _require_non_empty_strings(**values: Any) -> None:
@@ -390,9 +410,9 @@ class ChatService:
         Returns:
             dict: List of chat members
         """
-        if not bot_id or not chat_id:
-            raise LINEOAError("bot_id and chat_id are required")
-        url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/members?limit={limit}"
+        self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
+        limit = self._bounded_integer(limit, "limit", 1, 100)
+        url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/members"
         headers = self._browser_request_headers(**{
             "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
             "priority": "u=1, i",
@@ -404,13 +424,20 @@ class ChatService:
         if xsrf_token:
             headers["x-xsrf-token"] = xsrf_token
         req = session if session else requests
-        resp = self._request("get_chat_members", req.get, url, headers=headers, timeout=self.request_timeout)
+        resp = self._request(
+            "get_chat_members",
+            req.get,
+            url,
+            headers=headers,
+            params={"limit": limit},
+            timeout=self.request_timeout,
+        )
         return self._json_response(resp, "get_chat_members")
 
     async def async_get_chat_members(self, bot_id: str, chat_id: str, limit: int = 100, cookies: Optional[Union[Dict[str, str], str]] = None, xsrf_token: Optional[str] = None, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
-        if not bot_id or not chat_id:
-            raise LINEOAError("bot_id and chat_id are required")
-        url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/members?limit={limit}"
+        self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
+        limit = self._bounded_integer(limit, "limit", 1, 100)
+        url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/members"
         headers = self._base_headers()
         if xsrf_token:
             headers["x-xsrf-token"] = xsrf_token
@@ -425,6 +452,7 @@ class ChatService:
             async with session.get(
                 url,
                 headers=headers,
+                params={"limit": limit},
                 timeout=aiohttp.ClientTimeout(total=self.request_timeout),
             ) as resp:
                 return await self._async_json_response(resp, "get_chat_members")
@@ -445,6 +473,7 @@ class ChatService:
             chat_id: Chat ID
             on_message: Callback for new messages
         """
+        self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
         url = f"https://chat.line.biz/api/v3/bots/{bot_id}/chats/{chat_id}/events"
         headers = self._browser_request_headers(**{
             "accept": "text/event-stream",
@@ -506,12 +535,14 @@ class ChatService:
         Returns:
             dict: List of messages
         """
+        self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
+        limit = self._bounded_integer(limit, "limit", 1, 100)
         url = f"https://chat.line.biz/api/v3/bots/{bot_id}/chats/{chat_id}/messages"
-        params = {"limit": int(limit)}
-        if before is not None and str(before).isdigit():
-            params["before"] = int(before)
-        if after is not None and str(after).isdigit():
-            params["after"] = int(after)
+        params = {"limit": limit}
+        if before is not None:
+            params["before"] = self._pagination_cursor(before, "before")
+        if after is not None:
+            params["after"] = self._pagination_cursor(after, "after")
         headers = self._browser_request_headers(**{
             "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
             "priority": "u=1, i",
@@ -537,12 +568,14 @@ class ChatService:
         return self._json_response(resp, "get_chat_messages")
 
     async def async_get_chat_messages(self, bot_id: str, chat_id: str, cookies: Optional[Union[Dict[str, str], str]] = None, xsrf_token: Optional[str] = None, limit: int = 50, before: Optional[str] = None, after: Optional[str] = None, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
+        self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
+        limit = self._bounded_integer(limit, "limit", 1, 100)
         url = f"{self.v3_BASE_URL}/bots/{bot_id}/chats/{chat_id}/messages"
-        params = {"limit": int(limit)}
-        if before is not None and str(before).isdigit():
-            params["before"] = int(before)
-        if after is not None and str(after).isdigit():
-            params["after"] = int(after)
+        params = {"limit": limit}
+        if before is not None:
+            params["before"] = self._pagination_cursor(before, "before")
+        if after is not None:
+            params["after"] = self._pagination_cursor(after, "after")
         headers = self._base_headers()
         if xsrf_token:
             headers["x-xsrf-token"] = xsrf_token
@@ -841,6 +874,7 @@ class ChatService:
         Returns:
             dict: Always empty
         """
+        self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/typing"
         return self._put_json(
             url,
@@ -859,6 +893,7 @@ class ChatService:
         Returns:
             dict: Always empty
         """
+        self._require_non_empty_strings(bot_id=bot_id)
         if not state or "connectionId" not in state or "idle" not in state:
             raise LINEOAError("require state 'connectionId' and 'idle' fields")
         payload = merge_dicts({}, state)
@@ -880,6 +915,7 @@ class ChatService:
         Returns:
             dict: API response
         """
+        self._require_non_empty_strings(bot_id=bot_id)
         url = f"{self.v1_BASE_URL}/bots/{bot_id}/streamingApiToken"
         headers = self._browser_request_headers(
             Origin="https://chat.line.biz",
@@ -915,13 +951,15 @@ class ChatService:
         Yields:
             dict: Event data
         """
+        self._require_non_empty_strings(streaming_api_token=streaming_api_token)
         try:
-            ping_secs = int(ping_secs)
-            max_stream_seconds = float(max_stream_seconds)
-        except (TypeError, ValueError, OverflowError) as error:
+            ping_secs = self._positive_integer(ping_secs, "ping_secs")
+            max_stream_seconds = self._positive_finite_timeout(
+                max_stream_seconds,
+                "max_stream_seconds",
+            )
+        except LINEOAError as error:
             raise LINEOAError("Invalid LINE streaming timing configuration") from error
-        if ping_secs < 1 or not math.isfinite(max_stream_seconds) or max_stream_seconds <= 0:
-            raise LINEOAError("Invalid LINE streaming timing configuration")
 
         try:
             parsed_base_url = urllib.parse.urlparse(base_url)
