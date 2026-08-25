@@ -523,8 +523,13 @@ class AuthServiceTests(unittest.TestCase):
 
     def test_unknown_browser_channel_is_rejected(self):
         service = AuthService()
-        with self.assertRaisesRegex(Exception, "Google Chrome or Microsoft Edge"):
-            service._browser_headers_for_channel("chromium")
+        for browser_channel in ("chromium", None, 123, True, object()):
+            with self.subTest(browser_channel=browser_channel):
+                with self.assertRaisesRegex(
+                    LINEOAError,
+                    "Google Chrome or Microsoft Edge",
+                ):
+                    service._browser_headers_for_channel(browser_channel)
 
     def test_email_otp_callback_completes_verification(self):
         with tempfile.TemporaryDirectory() as temp_dir:

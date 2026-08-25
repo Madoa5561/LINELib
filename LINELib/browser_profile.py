@@ -19,7 +19,11 @@ WINDOWS_EDGE_SEC_CH_UA = (
 
 def browser_headers_for_channel(browser_channel: str = "chrome") -> Dict[str, str]:
     """Return a consistent Windows 11 browser identity for LINE requests."""
-    channel = (browser_channel or "").lower()
+    if not isinstance(browser_channel, str):
+        raise LINEOAError(
+            "browser_channel must be a Google Chrome or Microsoft Edge channel."
+        )
+    channel = browser_channel.lower()
     if channel.startswith("msedge"):
         user_agent = WINDOWS_EDGE_USER_AGENT
         sec_ch_ua = WINDOWS_EDGE_SEC_CH_UA
