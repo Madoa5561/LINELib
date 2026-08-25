@@ -63,6 +63,8 @@ bot = LineBot(
 )
 ```
 
+`interactive_timeout` はbool以外の有限の正数を秒単位で指定します。不正値はブラウザ起動前に `LINEOAError` になります。
+
 処理の流れ:
 
 1. インストール済みGoogle Chromeを可視状態で起動する

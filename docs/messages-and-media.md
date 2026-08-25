@@ -208,7 +208,7 @@ sticker_path = bot.save_sticker_image(
 )
 ```
 
-`get_image_preview()` はbytes、2つの `save_*()` は保存パスを返します。メソッド名はimageですが、内部ではcontent preview endpointを使用します。受信イベントからの保存には、種別を判定する `save_message_media()` の方が安全です。
+`get_image_preview()` はbytes、2つの `save_*()` は保存パスを返します。メソッド名はimageですが、内部ではcontent preview endpointを使用します。受信イベントからの保存には、種別を判定する `save_message_media()` の方が安全です。必須のID、content hash、保存先が欠けている場合は、通信・ファイル操作前に `LINEOAError` になります。
 
 ## ローカルレート制限
 

@@ -145,6 +145,111 @@ class FakeFormData:
 
 
 class ChatServiceTests(unittest.TestCase):
+    def test_management_queries_reject_invalid_inputs_before_request(self):
+        service = ChatService()
+        session = requests.Session()
+        session.get = Mock(return_value=SyncResponse({"list": []}))
+        operations = (
+            lambda: service.get_bot_account(None, session=session),
+            lambda: service.get_bot_accounts(limit=0, session=session),
+            lambda: service.get_bot_accounts(limit=1001, session=session),
+            lambda: service.get_bot_accounts(no_filter="true", session=session),
+            lambda: service.get_activities(None, "Uchat", session=session),
+            lambda: service.get_activities(
+                "Ubot", "Uchat", limit=101, session=session
+            ),
+            lambda: service.get_notes("Ubot", "Uchat", limit=0, session=session),
+            lambda: service.get_notes(
+                "Ubot", "Uchat", with_total="true", session=session
+            ),
+            lambda: service.get_saved_replies(
+                "Ubot", page_size=0, session=session
+            ),
+            lambda: service.get_saved_replies(
+                "Ubot", page_size=101, session=session
+            ),
+            lambda: service.get_saved_replies("Ubot", page=0, session=session),
+            lambda: service.get_saved_replies(
+                "Ubot",
+                exclude_username_placeholder="false",
+                session=session,
+            ),
+            lambda: service.get_pinned_messages("Ubot", None, session=session),
+            lambda: service.get_holiday("", session=session),
+            lambda: service.get_plugins(None, session=session),
+        )
+
+        for operation in operations:
+            with self.subTest(operation=operation):
+                with self.assertRaises(LINEOAError):
+                    operation()
+
+        session.get.assert_not_called()
+
+    def test_management_queries_normalize_valid_limits(self):
+        service = ChatService()
+        session = requests.Session()
+        session.get = Mock(return_value=SyncResponse({"list": []}))
+
+        service.get_bot_accounts(limit="1000", no_filter=False, session=session)
+        self.assertEqual(
+            {"limit": 1000, "noFilter": "false"},
+            session.get.call_args.kwargs["params"],
+        )
+
+        service.get_activities("Ubot", "Uchat", limit="100", session=session)
+        self.assertEqual(
+            {"limit": 100},
+            session.get.call_args.kwargs["params"],
+        )
+
+        service.get_notes(
+            "Ubot", "Uchat", limit="100", with_total=False, session=session
+        )
+        self.assertEqual(
+            {"limit": 100, "withTotal": "false"},
+            session.get.call_args.kwargs["params"],
+        )
+
+        service.get_saved_replies(
+            "Ubot",
+            exclude_username_placeholder=True,
+            page_size="100",
+            page="2",
+            session=session,
+        )
+        self.assertEqual(
+            {
+                "query": "",
+                "excludeUsernamePlaceholder": "true",
+                "sortKey": "CREATED_AT",
+                "pageSize": 100,
+                "page": 2,
+            },
+            session.get.call_args.kwargs["params"],
+        )
+
+    def test_media_operations_reject_missing_values_before_request(self):
+        service = ChatService()
+        session = requests.Session()
+        session.get = Mock(return_value=SyncResponse())
+        operations = (
+            lambda: service.get_content_preview(None, "hash", session=session),
+            lambda: service.get_content_preview("Ubot", "", session=session),
+            lambda: service.get_sticker_image(None, session=session),
+            lambda: service.save_sticker_image("123", None, session=session),
+            lambda: service.save_content_preview(
+                "Ubot", "hash", None, session=session
+            ),
+        )
+
+        for operation in operations:
+            with self.subTest(operation=operation):
+                with self.assertRaises(LINEOAError):
+                    operation()
+
+        session.get.assert_not_called()
+
     def test_send_operations_reject_missing_ids_before_request(self):
         service = ChatService()
         session = Mock()

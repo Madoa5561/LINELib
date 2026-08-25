@@ -44,7 +44,7 @@ bot = LineBot(
 | `get_2fa_code_callback` | `None` | 6桁メールOTPを返す引数なし関数 |
 | `interactive_login` | `False` | 可視ブラウザの公式ログイン画面を使うか |
 | `browser_channel` | `"chrome"` | `chrome` または `msedge`。Cookie Sessionの認証用headerにも反映 |
-| `interactive_timeout` | `300` | 対話ログイン全体の待機秒数 |
+| `interactive_timeout` | `300` | 対話ログイン全体の待機秒数。bool以外の有限の正数 |
 
 `email` と `password` は必ず両方を渡してください。片方だけではメールログインが開始されません。保存Cookieが有効なら、認証情報を渡していてもCookieが先に使われます。
 
@@ -58,6 +58,7 @@ bot = LineBot(
 - 送信がローカルレート制限に達した場合は例外ではなく `{"ratelimit": True, "ratelimit_after": UNIX timestamp}` を返します。
 - HTTP失敗、不正レスポンス、認証失敗は原則 `LINEOAError` です。
 - 必須の `chat_id`、`text`、`file_path` が `None` または空文字の高レベル送信は `ValueError` です。
+- 管理情報取得に必要な `bot_id`、`chat_id`、国コードなどの欠落や、件数・真偽値の不正値はHTTP通信前に `LINEOAError` です。
 - LINE内部API由来の辞書キーは変更される可能性があるため `.get()` で読み取ってください。
 
 ## 送信
@@ -100,12 +101,14 @@ LINE側の制限とは別の、ライブラリ内の安全弁です。詳しく�
 
 正規化フィールドは[イベントとPolling](events-and-polling.md#正規化メッセージ)、保存規則は[受信メディアを保存する](messages-and-media.md#受信メディアを保存する)を参照してください。
 
+`bot_id`、`content_hash`、`sticker_id` は空でない文字列、`file_path` は空でない文字列または `os.PathLike` が必要です。不正値はHTTP通信やファイル操作の前に `LINEOAError` になります。
+
 ## アカウント・管理情報
 
 | メソッド | 戻り値 | 内容 |
 |---|---|---|
 | `get_me()` | `dict` | ログイン利用者情報 |
-| `get_bot_account(bot_id, no_filter=True)` | `dict` | 指定Official Account情報 |
+| `get_bot_account(bot_id, no_filter=True)` | `dict` | 指定Official Account情報。`no_filter` はbool |
 | `get_csrf_token()` | `dict` | CSRF endpointのJSON |
 | `get_whitelist_domains()` | `dict` | whitelist domain情報 |
 | `get_me_settings_pc()` | `dict` | PC向け利用者設定 |
@@ -123,8 +126,8 @@ LINE側の制限とは別の、ライブラリ内の安全弁です。詳しく�
 | `get_available_features(bot_id)` | `dict` | 利用可能feature |
 | `get_banner_web(bot_id)` | `dict` | Web banner情報 |
 | `get_call_session(bot_id)` | `dict` | call session情報 |
-| `get_activities(bot_id, chat_id, limit=1)` | `dict` | チャットactivity |
-| `get_notes(bot_id, chat_id, limit=20, with_total=True)` | `dict` | note一覧 |
+| `get_activities(bot_id, chat_id, limit=1)` | `dict` | チャットactivity。`limit` は1〜100 |
+| `get_notes(bot_id, chat_id, limit=20, with_total=True)` | `dict` | note一覧。`limit` は1〜100、`with_total` はbool |
 | `get_use_manual_chat(bot_id, chat_id)` | `dict` | 手動チャット利用状態 |
 
 ## 入力支援・共通情報
@@ -133,7 +136,7 @@ LINE側の制限とは別の、ライブラリ内の安全弁です。詳しく�
 |---|---|---|
 | `get_recent_stickers(bot_id)` | `dict` | 最近使ったsticker |
 | `get_recent_emojis(bot_id)` | `dict` | 最近使ったemoji |
-| `get_saved_replies(bot_id, query="", exclude_username_placeholder=False, sort_key="CREATED_AT", page_size=25, page=1)` | `dict` | 保存済み返信を検索・ページ取得 |
+| `get_saved_replies(bot_id, query="", exclude_username_placeholder=False, sort_key="CREATED_AT", page_size=25, page=1)` | `dict` | 保存済み返信を検索・ページ取得。`sort_key` は空でない文字列、`page_size` は1〜100、`page` は1以上、除外フラグはbool |
 | `get_clock_now()` | `dict` | 管理APIの現在時刻情報 |
 | `get_holiday(country="JP")` | `dict` | 国コードに対応する休日情報 |
 

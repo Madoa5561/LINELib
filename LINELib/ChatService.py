@@ -117,6 +117,12 @@ class ChatService:
             raise LINEOAError(f"{', '.join(missing)} {verb} required")
 
     @staticmethod
+    def _require_boolean(value: Any, name: str) -> bool:
+        if not isinstance(value, bool):
+            raise LINEOAError(f"{name} must be a boolean")
+        return value
+
+    @staticmethod
     def _require_file_path(file_path: Any) -> Any:
         try:
             normalized_path = os.fspath(file_path)
@@ -679,6 +685,8 @@ class ChatService:
         Returns:
             dict: Bot info
         """
+        self._require_non_empty_strings(bot_id=bot_id)
+        no_filter = self._require_boolean(no_filter, "no_filter")
         url = f"{self.v1_BASE_URL}/bots/{bot_id}"
         params = {"noFilter": str(no_filter).lower()}
         return self._get_json(url, session=session, xsrf_token=xsrf_token, params=params)
@@ -708,6 +716,8 @@ class ChatService:
         Returns:
             dict: List of bot accounts
         """
+        limit = self._bounded_integer(limit, "limit", 1, 1000)
+        no_filter = self._require_boolean(no_filter, "no_filter")
         url = "https://chat.line.biz/api/v1/bots"
         params = {"limit": limit, "noFilter": str(no_filter).lower()}
         browser_headers = self._base_headers()
@@ -726,58 +736,84 @@ class ChatService:
         Returns:
             dict: Pinned messages
         """
+        self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
         url = f"{self.v2_BASE_URL}/bots/{bot_id}/chats/{chat_id}/messages/pin"
         return self._get_json(url, session=session, xsrf_token=xsrf_token)
 
     def get_chat(self, bot_id: str, chat_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
         return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}", session=session, xsrf_token=xsrf_token, referer=f"https://chat.line.biz/{bot_id}/chat/{chat_id}", origin="https://chat.line.biz")
 
     def get_chat_mode(self, bot_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        self._require_non_empty_strings(bot_id=bot_id)
         return self._get_json(f"{self.v4_BASE_URL}/bots/{bot_id}/settings/chatMode", session=session, xsrf_token=xsrf_token)
 
     def get_chat_mode_schedules(self, bot_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        self._require_non_empty_strings(bot_id=bot_id)
         return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/settings/chatModeSchedules", session=session, xsrf_token=xsrf_token)
 
     def get_available_features(self, bot_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        self._require_non_empty_strings(bot_id=bot_id)
         return self._get_json(f"{self.v2_BASE_URL}/bots/{bot_id}/availableFeatures", session=session, xsrf_token=xsrf_token)
 
     def get_banner_web(self, bot_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        self._require_non_empty_strings(bot_id=bot_id)
         return self._get_json(f"{self.v2_BASE_URL}/bots/{bot_id}/banner/web", session=session, xsrf_token=xsrf_token)
 
     def get_call_session(self, bot_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        self._require_non_empty_strings(bot_id=bot_id)
         return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/callSession", session=session, xsrf_token=xsrf_token)
 
     def get_activities(self, bot_id: str, chat_id: str, limit: int = 1, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
+        limit = self._bounded_integer(limit, "limit", 1, 100)
         return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/activities", session=session, xsrf_token=xsrf_token, params={"limit": limit})
 
     def get_notes(self, bot_id: str, chat_id: str, limit: int = 20, with_total: bool = True, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
+        limit = self._bounded_integer(limit, "limit", 1, 100)
+        with_total = self._require_boolean(with_total, "with_total")
         return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/chats/{chat_id}/notes", session=session, xsrf_token=xsrf_token, params={"limit": limit, "withTotal": str(with_total).lower()})
 
     def get_authorized_users(self, bot_id: str, biz_ids: str = "__AUTO_RESPONSE", session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        self._require_non_empty_strings(bot_id=bot_id)
         return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/authorizedUsers", session=session, xsrf_token=xsrf_token, params={"bizIds": biz_ids})
 
     def get_use_manual_chat(self, bot_id: str, chat_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        self._require_non_empty_strings(bot_id=bot_id, chat_id=chat_id)
         return self._get_json(f"{self.v2_BASE_URL}/bots/{bot_id}/chats/{chat_id}/useManualChat", session=session, xsrf_token=xsrf_token)
 
     def get_recent_stickers(self, bot_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        self._require_non_empty_strings(bot_id=bot_id)
         return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/stickers/recently", session=session, xsrf_token=xsrf_token)
 
     def get_recent_emojis(self, bot_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        self._require_non_empty_strings(bot_id=bot_id)
         return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/emojis/recently", session=session, xsrf_token=xsrf_token)
 
     def get_saved_replies(self, bot_id: str, query: str = "", exclude_username_placeholder: bool = False, sort_key: str = "CREATED_AT", page_size: int = 25, page: int = 1, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        self._require_non_empty_strings(bot_id=bot_id, sort_key=sort_key)
+        exclude_username_placeholder = self._require_boolean(
+            exclude_username_placeholder,
+            "exclude_username_placeholder",
+        )
+        page_size = self._bounded_integer(page_size, "page_size", 1, 100)
+        page = self._positive_integer(page, "page")
         return self._get_json(f"{self.v2_BASE_URL}/bots/{bot_id}/savedReplies", session=session, xsrf_token=xsrf_token, params={"query": query, "excludeUsernamePlaceholder": str(exclude_username_placeholder).lower(), "sortKey": sort_key, "pageSize": page_size, "page": page})
 
     def get_clock_now(self, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
         return self._get_json(f"{self.v1_BASE_URL}/clock/now", session=session, xsrf_token=xsrf_token)
 
     def get_holiday(self, country: str = "JP", session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        self._require_non_empty_strings(country=country)
         return self._get_json(f"{self.v1_BASE_URL}/holiday/{country}", session=session, xsrf_token=xsrf_token)
 
     def get_plugins(self, bot_id: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> Dict[str, Any]:
+        self._require_non_empty_strings(bot_id=bot_id)
         return self._get_json(f"{self.v1_BASE_URL}/bots/{bot_id}/plugins", session=session, xsrf_token=xsrf_token)
 
     def get_content_preview(self, bot_id: str, content_hash: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> bytes:
+        self._require_non_empty_strings(bot_id=bot_id, content_hash=content_hash)
         url = f"https://chat-content.line.biz/bot/{bot_id}/{content_hash}/preview"
         req = session if session else requests
         resp = self._request(
@@ -795,6 +831,7 @@ class ChatService:
         return resp.content
 
     def get_sticker_image(self, sticker_id: str, session: Optional[requests.Session] = None) -> bytes:
+        self._require_non_empty_strings(sticker_id=sticker_id)
         url = f"https://stickershop.line-scdn.net/stickershop/v1/sticker/{sticker_id}/android/sticker.png"
         req = session if session else requests
         resp = self._request(
@@ -812,6 +849,7 @@ class ChatService:
         return resp.content
 
     def _download_to_file(self, url: str, file_path: str, session: Optional[requests.Session], action: str) -> str:
+        file_path = self._require_file_path(file_path)
         req = session if session else requests
         target_path = os.path.abspath(file_path)
         parent = os.path.dirname(target_path)
@@ -858,10 +896,14 @@ class ChatService:
         return file_path
 
     def save_sticker_image(self, sticker_id: str, file_path: str, session: Optional[requests.Session] = None) -> str:
+        self._require_non_empty_strings(sticker_id=sticker_id)
+        file_path = self._require_file_path(file_path)
         url = f"https://stickershop.line-scdn.net/stickershop/v1/sticker/{sticker_id}/android/sticker.png"
         return self._download_to_file(url, file_path, session, "save_sticker_image")
 
     def save_content_preview(self, bot_id: str, content_hash: str, file_path: str, session: Optional[requests.Session] = None, xsrf_token: Optional[str] = None) -> str:
+        self._require_non_empty_strings(bot_id=bot_id, content_hash=content_hash)
+        file_path = self._require_file_path(file_path)
         url = f"https://chat-content.line.biz/bot/{bot_id}/{content_hash}/preview"
         return self._download_to_file(url, file_path, session, "save_content_preview")
 

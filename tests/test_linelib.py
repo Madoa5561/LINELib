@@ -31,6 +31,23 @@ def make_library(storage_path):
 
 
 class LINELibTests(unittest.TestCase):
+    def test_media_wrappers_reject_invalid_values_before_service_call(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = make_library(Path(temp_dir) / "storage.json")
+            operations = (
+                lambda: library.save_image_preview(None, "hash", "preview.png"),
+                lambda: library.save_sticker_image("123", None),
+                lambda: library.save_message_media({}, None),
+            )
+
+            for operation in operations:
+                with self.subTest(operation=operation):
+                    with self.assertRaises(linelib_module.LINEOAError):
+                        operation()
+
+            library._chat_service.save_content_preview.assert_not_called()
+            library._chat_service.save_sticker_image.assert_not_called()
+
     def test_default_bot_uses_validated_chat_enabled_ids(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             library = make_library(Path(temp_dir) / "storage.json")

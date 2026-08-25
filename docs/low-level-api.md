@@ -130,13 +130,13 @@ finally:
 | `get_available_features(bot_id)` | 利用可能feature |
 | `get_banner_web(bot_id)` | Web banner |
 | `get_call_session(bot_id)` | call session |
-| `get_activities(bot_id, chat_id, limit=1)` | activity |
-| `get_notes(bot_id, chat_id, limit=20, with_total=True)` | note |
+| `get_activities(bot_id, chat_id, limit=1)` | activity。`limit` は1〜100 |
+| `get_notes(bot_id, chat_id, limit=20, with_total=True)` | note。`limit` は1〜100、`with_total` はbool |
 | `get_authorized_users(bot_id, biz_ids="__AUTO_RESPONSE")` | 権限ユーザー |
 | `get_use_manual_chat(bot_id, chat_id)` | 手動チャット状態 |
 | `get_recent_stickers(bot_id)` | 最近のsticker |
 | `get_recent_emojis(bot_id)` | 最近のemoji |
-| `get_saved_replies(bot_id, query="", exclude_username_placeholder=False, sort_key="CREATED_AT", page_size=25, page=1)` | 保存済み返信 |
+| `get_saved_replies(bot_id, query="", exclude_username_placeholder=False, sort_key="CREATED_AT", page_size=25, page=1)` | 保存済み返信。`sort_key` は空でない文字列、`page_size` は1〜100、`page` は1以上、除外フラグはbool |
 | `get_clock_now()` | 管理APIの時刻 |
 | `get_holiday(country="JP")` | 休日情報 |
 | `get_plugins(bot_id)` | plugin情報 |
@@ -161,6 +161,8 @@ finally:
 | `save_image_preview(bot_id, content_hash, file_path)` | `str` | previewを保存 |
 | `save_sticker_image(sticker_id, file_path)` | `str` | stickerを保存 |
 | `save_message_media(event, file_path)` | `str` | 種別に応じてcontent、sticker、link JSONを保存 |
+
+content系の `bot_id` / `content_hash` とsticker系の `sticker_id` は空でない文字列、保存系の `file_path` は空でない文字列または `os.PathLike` が必要です。不正値は通信・ファイル操作前に `LINEOAError` になります。
 
 ### ローカル状態
 
@@ -205,7 +207,7 @@ from LINELib import ChatService
 chat = ChatService(request_timeout=30, upload_timeout=120, browser_headers=None)
 ```
 
-`request_timeout` は通常HTTP、`upload_timeout` はファイルuploadの秒数で、どちらも有限の正数が必要です。`browser_headers` は省略時にWindows版Chromeのprofileを使い、`LINELib` からは選択したChrome / Edge profileが自動で渡されます。
+`request_timeout` は通常HTTP、`upload_timeout` はファイルuploadの秒数で、どちらもbool以外の有限の正数が必要です。`browser_headers` は省略時にWindows版Chromeのprofileを使い、`LINELib` からは選択したChrome / Edge profileが自動で渡されます。
 
 ほとんどの同期メソッドは末尾に `session=None, xsrf_token=None` を受け取ります。変更・認証が必要なendpointでは、ログイン済み `requests.Session` と `chat.line.biz` のXSRF tokenを同じSessionから渡してください。省略時は未認証のmodule-level `requests` が使われる場合があり、通常の管理API操作には向きません。
 
@@ -232,15 +234,15 @@ SSE読取中の通信切断は `LINEOAError` として通知されます。
 
 | メソッド | 内容 |
 |---|---|
-| `get_bot_accounts(..., limit=1000, no_filter=True)` | Bot一覧 |
-| `get_bot_account(bot_id, no_filter=True, ...)` | Bot情報 |
+| `get_bot_accounts(..., limit=1000, no_filter=True)` | Bot一覧。`limit` は1〜1000、`no_filter` はbool |
+| `get_bot_account(bot_id, no_filter=True, ...)` | Bot情報。`no_filter` はbool |
 | `get_chats(bot_id, ..., folder_type="ALL", tag_ids="", auto_tag_ids="", limit=25, prioritize_pinned_chat=True)` | 条件付きチャット一覧。`limit` は1〜25 |
 | `get_chat(bot_id, chat_id, ...)` | 1チャット |
 | `get_chat_members(bot_id, chat_id, limit=100, ...)` | グループチャットのメンバー。`limit` は1〜100 |
 | `async_get_chat_members(bot_id, chat_id, limit=100, ...)` | asyncグループメンバー。`limit` は1〜100 |
 | `get_pinned_messages(bot_id, chat_id, ...)` | ピン留め |
-| `get_activities(bot_id, chat_id, limit=1, ...)` | activity |
-| `get_notes(bot_id, chat_id, limit=20, with_total=True, ...)` | note |
+| `get_activities(bot_id, chat_id, limit=1, ...)` | activity。`limit` は1〜100 |
+| `get_notes(bot_id, chat_id, limit=20, with_total=True, ...)` | note。`limit` は1〜100、`with_total` はbool |
 | `get_use_manual_chat(bot_id, chat_id, ...)` | 手動チャット状態 |
 
 ### 設定・利用者・管理情報
@@ -259,7 +261,7 @@ SSE読取中の通信切断は `LINEOAError` として通知されます。
 | `get_authorized_users(bot_id, biz_ids="__AUTO_RESPONSE", ...)` | 権限ユーザー |
 | `get_recent_stickers(bot_id, ...)` | 最近のsticker |
 | `get_recent_emojis(bot_id, ...)` | 最近のemoji |
-| `get_saved_replies(bot_id, query="", exclude_username_placeholder=False, sort_key="CREATED_AT", page_size=25, page=1, ...)` | 保存済み返信 |
+| `get_saved_replies(bot_id, query="", exclude_username_placeholder=False, sort_key="CREATED_AT", page_size=25, page=1, ...)` | 保存済み返信。`sort_key` は空でない文字列、`page_size` は1〜100、`page` は1以上、除外フラグはbool |
 | `get_clock_now(...)` | 管理APIの時刻 |
 | `get_holiday(country="JP", ...)` | 休日 |
 | `get_plugins(bot_id, ...)` | plugin |
@@ -276,6 +278,8 @@ SSE読取中の通信切断は `LINEOAError` として通知されます。
 | `streaming_state(bot_id, state, ...)` | 接続状態送信 |
 | `stream_events(streaming_api_token, device_type="", client_type="PC", ping_secs=60, last_event_id=None, ..., max_stream_seconds=82800, base_url="https://chat-streaming-api.line.biz", version="v2")` | event辞書をyieldするgenerator |
 | `set_typing(bot_id, chat_id, ...)` | 入力中状態送信 |
+
+URLに埋め込むBot ID、chat ID、content hash、sticker ID、国コードなどは空でない文字列が必要です。content保存系の `file_path` は空でない文字列または `os.PathLike` が必要で、不正値はHTTP通信前に `LINEOAError` になります。
 
 SSEの `ping_secs` は正の整数、`max_stream_seconds` はbool以外の有限の正数が必要です。欠落token・Bot ID・chat IDや不正な時間設定は、token取得やSSE接続より前に `LINEOAError` になります。
 
@@ -307,7 +311,7 @@ auth = AuthService(
 )
 ```
 
-`cookie_store_path` はログインCookieのJSON保存先、`request_timeout` は認証HTTPの秒数で、有限の正数が必要です。`interactive_timeout` も同じ制約です。`channel_id` / `channel_secret` / `access_token` は別系統のtoken設定用で、Official Account ManagerのCookieログインとは別物です。
+`cookie_store_path` はログインCookieのJSON保存先、`request_timeout` は認証HTTPの秒数で、bool以外の有限の正数が必要です。`interactive_timeout` も同じ制約です。`channel_id` / `channel_secret` / `access_token` は別系統のtoken設定用で、Official Account ManagerのCookieログインとは別物です。
 
 ### 公開メソッド
 

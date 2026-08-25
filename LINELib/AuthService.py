@@ -63,6 +63,8 @@ class AuthService:
 
 	@staticmethod
 	def _positive_finite_timeout(value: Any, name: str) -> float:
+		if isinstance(value, bool):
+			raise LINEOAError(f"{name} must be a positive finite number.")
 		try:
 			parsed_value = float(value)
 		except (TypeError, ValueError, OverflowError) as error:

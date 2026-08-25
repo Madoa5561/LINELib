@@ -395,6 +395,8 @@ class LINELib:
         return self._chat_service.get_content_preview(bot_id=bot_id, content_hash=content_hash, session=self._session, xsrf_token=self._xsrf_token)
 
     def save_image_preview(self, bot_id: str, content_hash: str, file_path: str) -> str:
+        self._require_non_empty_strings(bot_id=bot_id, content_hash=content_hash)
+        file_path = self._require_file_path(file_path)
         os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
         return self._chat_service.save_content_preview(
             bot_id=bot_id,
@@ -405,6 +407,8 @@ class LINELib:
         )
 
     def save_sticker_image(self, sticker_id: str, file_path: str) -> str:
+        self._require_non_empty_strings(sticker_id=sticker_id)
+        file_path = self._require_file_path(file_path)
         os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
         return self._chat_service.save_sticker_image(
             sticker_id=sticker_id,
@@ -423,6 +427,7 @@ class LINELib:
         return normalized
 
     def save_message_media(self, event: Dict[str, Any], file_path: str) -> str:
+        file_path = self._require_file_path(file_path)
         normalized = self.normalize_message_event(event)
         message_type = normalized.get("message_type")
         bot_id = normalized.get("bot_id")
