@@ -24,6 +24,30 @@ class StubbornThread:
 
 
 class LineBotTests(unittest.TestCase):
+    def test_listen_start_failure_restores_stopped_state(self):
+        class FailingListenThread:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def start(self):
+                raise RuntimeError("thread resources unavailable")
+
+        bot = make_bot({"kind": "unknown"})
+        bot._listen_thread = None
+        bot._stop_event = threading.Event()
+        bot.running = False
+        bot._resolve_bot_id = Mock(return_value="Ubot")
+
+        with (
+            patch("LINELib.linebot.threading.Thread", FailingListenThread),
+            self.assertRaisesRegex(RuntimeError, "resources unavailable"),
+        ):
+            bot.listen(block=False)
+
+        self.assertFalse(bot.running)
+        self.assertTrue(bot._stop_event.is_set())
+        self.assertIsNone(bot._listen_thread)
+
     def test_concurrent_listen_calls_start_only_one_polling_thread(self):
         real_thread = threading.Thread
         resolve_barrier = threading.Barrier(2)

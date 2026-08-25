@@ -318,9 +318,19 @@ class LineBot:
                 raise RuntimeError("Polling is already running")
             self.running = True
             self._stop_event.clear()
-            self._listen_thread = threading.Thread(target=self._polling_loop, args=(botid,), daemon=True)
-            self._listen_thread.start()
-            listen_thread = self._listen_thread
+            try:
+                listen_thread = threading.Thread(
+                    target=self._polling_loop,
+                    args=(botid,),
+                    daemon=True,
+                )
+                listen_thread.start()
+            except BaseException:
+                self.running = False
+                self._stop_event.set()
+                self._listen_thread = None
+                raise
+            self._listen_thread = listen_thread
         if not block:
             return listen_thread
         try:
